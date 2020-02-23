@@ -1,0 +1,70 @@
+v1.3.0.0 (2019-11-20)
+========================
+    - added - support for Xavier platform
+    - added - Timestamp field to the IImage structure
+
+v1.2.0.0 (2019-07-23)
+========================
+    - added - ProcessImage, AllocateProcessedImage and DeallocateProcessedImage functions
+    - added - SV_PLATFORM_PROCESSING enum with SV_ALGORITHM_AUTODETECT member
+    - added - GetDriverName and GetImageInfo methods in ICamera class
+    - added - post processing options per sensor in dispaly_image C++ example
+    - removed - SV_API_PLATFORM_PROCESSING control
+    - fixed - non existing errors reported in log file
+    - changed - power cycling after stopping stream
+    - changed - examples now use ProcessImage function instead of the SV_API_PLATFORM_PROCESSING control
+    - changed - examples now use GetDriverName and GetImageInfo methods
+    - changed - pipeline implementation in dispaly_image C++ example
+
+v1.1.0.0 (2019-05-28)
+========================
+    - added - SV_API_PREVENT_TEARING and SV_API_PREVENT_TEARING_TIMEOUT controls
+    - added - GetDriverName method in C++ API and sv_camera_GetDriverName function in C API
+    - added - stream from multiple sensors in display_image C++ example
+    - added - support for master - slave streaming in display_image C++ example
+    - added - saving image in TIFF, JPEG or PNG format in display_image C++ example using hotkeys
+    - added - toggling fps display in display_image C++ example using hotkeys
+    - added - full camera control configuration in display_image C++ example
+    - fixed - libs not able to allocate buffers after deallocation them
+    - fixed - libsv not able to start stream after running an argus application
+    - changed - image format and resolution set to default on camera initialization
+    - changed - OpenCV built with ability to save images
+    - changed - examples rpath from . to $ORIGIN
+
+v1.0.0.0 (2019-04-02)
+========================
+    - added - C examples
+    - changed - optimized display_image example
+
+v0.3.0.0 (2018-12-05)
+========================
+    - added - integrated support for both Jetson TX2 and DragonBoard 410c
+    - added - logging system
+    - added - platform-specific processing control
+
+v0.2.0.5_RC (2018-11-06)
+========================
+    - changed - ouput binaries are cross-compiled
+
+v0.2.0.4_RC (2018-11-02)
+========================
+    - added - new user controls
+
+v0.2.1.1_RC (2018-10-30)
+========================
+    - changed - support only for DragonBoard
+
+v0.2.0.3_RC (2018-10-26)
+========================
+    - added - displayed image debayering
+    - added - displayed image resizing
+    - added - new user controls
+
+v0.2.0.1_RC (2018-10-18)
+========================
+    - added - debayering to display image
+    - added - sensor mode support on Nvidia Jetson TX2
+    
+v0.1.0.0 (2018-07-09)
+=====================
+    - initial release
