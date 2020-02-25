@@ -12,6 +12,8 @@
 #include "common_cpp/camera_configurator.hpp"
 #include "common_cpp/common.hpp"
 
+//exif
+#include <exiv2/exiv2.hpp>
 
 #include <atomic>
 #include <condition_variable>
@@ -46,6 +48,7 @@ int  opt_min_exposure = -1;
 int  opt_max_exposure = -1;
 
 bool opt_nodisplay = false;
+bool opt_noexif = false;
 bool opt_verbose = false;
 
 
@@ -62,9 +65,30 @@ void PrintHelp() {
               "--min_exposure:      min gain for sweep\n"
               "--max_exposure:      max gain for sweep\n"
               "--nodisplay:         no jpeg or display--just raw image dump\n"
+              "--noexif:            no exif metadata in jpeg\n"
               "--verbose:           verbose\n"
               "--help:              show help\n";
     exit(1);
+}
+
+// *****************************************************************************
+
+void exifPrint(const Exiv2::ExifData exifData)
+{
+    Exiv2::ExifData::const_iterator i = exifData.begin();
+    for (; i != exifData.end(); ++i) {
+        std::cout << std::setw(35) << std::setfill(' ') << std::left
+                  << i->key() << " "
+                  << "0x" << std::setw(4) << std::setfill('0') << std::right
+                  << std::hex << i->tag() << " "
+                  << std::setw(9) << std::setfill(' ') << std::left
+                  << i->typeName() << " "
+                  << std::dec << std::setw(3)
+                  << std::setfill(' ') << std::right
+                  << i->count() << "  "
+                  << std::dec << i->value()
+                  << "\n";
+    }
 }
 
 
@@ -73,8 +97,13 @@ void SaveFrame(void *data, uint32_t length, std::string name, std::string folder
 std::string getCurrentControlValue(IControl *control);
 void setGain (ICamera *camera, uint32_t value);
 void setExposure (ICamera *camera, uint32_t value);
+void setMinMaxGain (ICamera *camera);
+void setMinMaxExposure (ICamera *camera);
+void varyGain (ICamera *camera);
+void varyExposure (ICamera *camera);
 std::string GetCurrentWorkingDir();
 std::string GetDateStamp();
+std::string GetDateTimeOriginal();
 
 /*
  * main routine:
@@ -105,6 +134,10 @@ int main(int argc, char **argv) {
     setGain(camera,opt_gain);
     setExposure(camera,opt_exposure);
     camera->GetControl(SV_V4L2_BLACK_LEVEL)->Set(0);
+
+    // set min/max levels
+    setMinMaxGain(camera);
+    setMinMaxExposure(camera);
 
     // assume defaults
     //common::SelectPixelFormat(control); 
@@ -181,10 +214,10 @@ int main(int argc, char **argv) {
         fpsMeasurer.FrameReceived();
 
         if (opt_vary_gain) {
-            setGain(camera, opt_gain + i);
+            varyGain(camera);
         }
         if (opt_vary_exposure) {
-            setExposure(camera, opt_exposure + i * 25);
+            varyExposure(camera);
         }
 
 
@@ -217,8 +250,44 @@ int main(int argc, char **argv) {
         std::string filenameJpeg = basename + ".jpeg";
 
         SaveFrame(data, length, filenameRaw, folderRaw);
+        std::vector<uchar> jpegbuf;
+        Exiv2::ExifData exifData;
         if (! opt_nodisplay) {
-            processor.SaveImageAsJpeg(mImage, folderJpeg + filenameJpeg);
+            if (mImage.depth() != CV_8U) {
+                constexpr auto CONVERSION_SCALE_16_TO_8 = 0.00390625;
+                mImage.convertTo(mImage, CV_8U, CONVERSION_SCALE_16_TO_8);
+
+            }
+            cv::imencode(".jpg",mImage, jpegbuf);
+            if (opt_noexif) {
+                SaveFrame(&jpegbuf[0], jpegbuf.size(), filenameJpeg, folderJpeg);
+            } else {
+                Exiv2::Image::AutoPtr eImage = Exiv2::ImageFactory::open(&jpegbuf[0],jpegbuf.size());
+                exifData["Exif.Image.ProcessingSoftware"] = "capture.cpp";
+                exifData["Exif.Image.SubfileType"] = 1;
+                exifData["Exif.Image.ImageDescription"] = "snappy carrots";
+                exifData["Exif.Image.Model"] = "tensorfield ag";
+                exifData["Exif.Image.AnalogBalance"] = opt_gain;
+                exifData["Exif.Image.ExposureTime"] = opt_exposure;
+                exifData["Exif.Image.DateTimeOriginal"] = GetDateTimeOriginal();
+                eImage->setExifData(exifData);
+                eImage->writeMetadata();
+                if (opt_verbose) {
+                    Exiv2::ExifData &ed2 = eImage->exifData();
+                    exifPrint(ed2);
+                }
+
+                Exiv2::FileIo file(folderJpeg + filenameJpeg);
+                file.open("wb");
+                file.write(eImage->io());
+                file.close();
+            }
+
+            //cv::Mat dst = cv::imdecode(jpegbuf,1);
+            //cv::imshow("dst", dst);
+            if (opt_verbose) {
+                std::cout << ". " << folderJpeg << filenameJpeg << std::endl << std::flush;
+            }
             cv::imshow("capture", mImage);
             cv::waitKey(1);
         }
@@ -258,6 +327,7 @@ void ProcessArgs(int argc, char** argv) {
         OptMinExposure,
         OptMaxExposure,
         OptNoDisplay,
+        OptNoExif,
         OptVerbose
     };
     static struct option long_opts[] = {
@@ -272,6 +342,7 @@ void ProcessArgs(int argc, char** argv) {
         {"min_exposure",  required_argument,  0,    OptMinExposure },
         {"max_exposure",  required_argument,  0,    OptMaxExposure },
         {"nodisplay",     no_argument,        0,    OptNoDisplay },
+        {"noexif",        no_argument,        0,    OptNoExif },
         {"verbose",       no_argument,        0,    OptVerbose },
         {NULL,            0,               NULL,    0}
     };
@@ -324,13 +395,17 @@ void ProcessArgs(int argc, char** argv) {
             opt_max_exposure = std::stoi(optarg);
             std::cout << "Max exposure set to: " << opt_max_exposure << std::endl;
             break;
-        case OptVerbose:
-            opt_verbose = true;
-            std::cout << "verbose mode" << std::endl;
+        case OptNoExif:
+            opt_noexif = true;
+            std::cout << "no exif metadata in jpeg files" << std::endl;
             break;
         case OptNoDisplay:
             opt_nodisplay = true;
             std::cout << "no display or jpeg files" << std::endl;
+            break;
+        case OptVerbose:
+            opt_verbose = true;
+            std::cout << "verbose mode" << std::endl;
             break;
         default:
             PrintHelp();
@@ -338,6 +413,16 @@ void ProcessArgs(int argc, char** argv) {
         }
     }
 }
+
+std::string GetDateTimeOriginal() {
+    time_t rawtime;
+    struct tm * timeinfo;
+
+    time ( &rawtime );
+    timeinfo = localtime ( &rawtime );
+    return asctime(timeinfo);
+}
+
 
 // sort of from http://www.cplusplus.com/forum/beginner/60194/
 
@@ -386,6 +471,34 @@ std::string getCurrentControlValue(IControl *control) {
     } else {
         return std::to_string(control->Get());
     }
+}
+
+void setMinMaxGain (ICamera *camera) {
+
+    int32_t minValue = camera->GetControl(SV_V4L2_GAIN)->GetMinValue();
+    int32_t maxValue = camera->GetControl(SV_V4L2_GAIN)->GetMaxValue();
+
+    if (opt_min_gain < 0) {
+        opt_min_gain = minValue;
+    }
+    if (opt_max_gain < 0) {
+        opt_max_gain = maxValue;
+    }
+
+}
+
+void setMinMaxExposure (ICamera *camera) {
+
+    int32_t minValue = camera->GetControl(SV_V4L2_EXPOSURE)->GetMinValue();
+    int32_t maxValue = camera->GetControl(SV_V4L2_EXPOSURE)->GetMaxValue();
+
+    if (opt_min_exposure < 0) {
+        opt_min_exposure = minValue;
+    }
+    if (opt_max_exposure < 0) {
+        opt_max_exposure = maxValue;
+    }
+
 }
 
 
@@ -453,6 +566,25 @@ void setExposure (ICamera *camera, uint32_t value) {
 
 
     camera->GetControl(SV_V4L2_EXPOSURE)->Set(value);
+
+}
+
+void varyGain (ICamera *camera) {
+    opt_gain++;
+    if (opt_gain > opt_max_gain) {
+        opt_gain = opt_min_gain;
+    }
+    setGain(camera, opt_gain);
+
+}
+
+void varyExposure (ICamera *camera) {
+    const int32_t incExposure = 10;
+    opt_exposure += incExposure;
+    if (opt_exposure > opt_max_exposure) {
+        opt_exposure = opt_min_exposure;
+    }
+    setExposure(camera, opt_exposure);
 
 }
 
