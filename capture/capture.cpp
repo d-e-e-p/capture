@@ -19,6 +19,8 @@
 #include <condition_variable>
 #include <ctime>
 #include <fstream>
+#include <experimental/filesystem>
+namespace fs=std::experimental::filesystem;
 #include <iomanip>
 #include <iostream>
 #include <linux/limits.h>
@@ -94,6 +96,7 @@ void exifPrint(const Exiv2::ExifData exifData)
 
 void ProcessArgs(int argc, char** argv);
 void SaveFrame(void *data, uint32_t length, std::string name, std::string folder);
+void SaveAndDisplayJpeg(ICamera *camera, IProcessedImage processedImage, std::string text, std::string folderJpeg, std::string basename,  std::string dateStamp);
 std::string getCurrentControlValue(IControl *control);
 void setGain (ICamera *camera, uint32_t value);
 void setExposure (ICamera *camera, uint32_t value);
@@ -134,6 +137,7 @@ int main(int argc, char **argv) {
     setGain(camera,opt_gain);
     setExposure(camera,opt_exposure);
     camera->GetControl(SV_V4L2_BLACK_LEVEL)->Set(0);
+    camera->GetControl(SV_V4L2_FRAMESIZE)->Set(0);
 
     // set min/max levels
     setMinMaxGain(camera);
@@ -173,7 +177,8 @@ int main(int argc, char **argv) {
     }
     const std::string dateStamp  = GetDateStamp();
     //const std::string currentWorkingDir = GetCurrentWorkingDir();
-    const std::string folderBase = "/home/deep/build/snappy/data/images/" + dateStamp + "/";
+    //const std::string folderBase = "/home/deep/build/snappy/data/images/" + dateStamp + "/";
+    const std::string folderBase = "/media/deep/KINGSTON/data/images/" + dateStamp + "/";
     const std::string folderRaw  = folderBase + "raw/";
     const std::string folderJpeg = folderBase + "jpeg/";
 
@@ -190,15 +195,12 @@ int main(int argc, char **argv) {
     std::system( (const char *) command.c_str());
 
 
+    // inits for loop
     int frameSaved = 0;
     int maxIntegerWidth = std::to_string(frameCount).length() + 1;
-    common::ImageProcessor processor;
-    IProcessedImage processedImage = sv::AllocateProcessedImage(camera->GetImageInfo());
-    cv::UMat mImage;
-    cv::namedWindow("capture", cv::WINDOW_OPENGL | cv::WINDOW_AUTOSIZE);
-
-
     common::FpsMeasurer fpsMeasurer;
+
+    std::vector<std::thread> threads;  // keep track of threads to close
 
     for (int i = 0; i < frameCount; i++) {
 
@@ -229,69 +231,23 @@ int main(int argc, char **argv) {
 
         void *data;
         uint32_t length;
-        if (! opt_nodisplay) {
-            sv::ProcessImage(image, processedImage, SV_ALGORITHM_AUTODETECT);
-            data = processedImage.data;
-            length = processedImage.length;
-            processor.AllocateMat(processedImage, mImage);
-            processor.DebayerImage(mImage,processedImage.pixelFormat);
-            processor.DrawText(mImage,text);
-        } else {
-            data = image.data;
-            length = image.length;
-            if (data == nullptr) {
-                std::cout << "data null" << std::endl;
-            }
-            //std::cout << "length" << image.length << std::endl;
+        data = image.data;
+        if (data == nullptr) {
+            std::cerr << "ERR: image.data null" << std::endl;
         }
-
-
+        length = image.length;
         std::string filenameRaw  = basename + ".raw";
-        std::string filenameJpeg = basename + ".jpeg";
-
         SaveFrame(data, length, filenameRaw, folderRaw);
-        std::vector<uchar> jpegbuf;
-        Exiv2::ExifData exifData;
+
+        int skip = 5;
         if (! opt_nodisplay) {
-            if (mImage.depth() != CV_8U) {
-                constexpr auto CONVERSION_SCALE_16_TO_8 = 0.00390625;
-                mImage.convertTo(mImage, CV_8U, CONVERSION_SCALE_16_TO_8);
-
+            if ( (i % skip) == 0) {
+                IProcessedImage processedImage = sv::AllocateProcessedImage(camera->GetImageInfo());
+                sv::ProcessImage(image, processedImage, SV_ALGORITHM_AUTODETECT);
+                threads.push_back(std::thread(SaveAndDisplayJpeg, camera, processedImage, text, folderJpeg,  basename, dateStamp));
+                //SaveAndDisplayJpeg (camera, processedImage, text, folderJpeg,  basename, dateStamp);
             }
-            cv::imencode(".jpg",mImage, jpegbuf);
-            if (opt_noexif) {
-                SaveFrame(&jpegbuf[0], jpegbuf.size(), filenameJpeg, folderJpeg);
-            } else {
-                Exiv2::Image::AutoPtr eImage = Exiv2::ImageFactory::open(&jpegbuf[0],jpegbuf.size());
-                exifData["Exif.Image.ProcessingSoftware"] = "capture.cpp";
-                exifData["Exif.Image.SubfileType"] = 1;
-                exifData["Exif.Image.ImageDescription"] = "snappy carrots";
-                exifData["Exif.Image.Model"] = "tensorfield ag";
-                exifData["Exif.Image.AnalogBalance"] = opt_gain;
-                exifData["Exif.Image.ExposureTime"] = opt_exposure;
-                exifData["Exif.Image.DateTimeOriginal"] = GetDateTimeOriginal();
-                eImage->setExifData(exifData);
-                eImage->writeMetadata();
-                if (opt_verbose) {
-                    Exiv2::ExifData &ed2 = eImage->exifData();
-                    exifPrint(ed2);
-                }
-
-                Exiv2::FileIo file(folderJpeg + filenameJpeg);
-                file.open("wb");
-                file.write(eImage->io());
-                file.close();
-            }
-
-            //cv::Mat dst = cv::imdecode(jpegbuf,1);
-            //cv::imshow("dst", dst);
-            if (opt_verbose) {
-                std::cout << ". " << folderJpeg << filenameJpeg << std::endl << std::flush;
-            }
-            cv::imshow("capture", mImage);
-            cv::waitKey(1);
-        }
-
+         }
 
         if (opt_verbose) {
             std::cout << ". " << text << std::endl << std::flush;
@@ -302,14 +258,83 @@ int main(int argc, char **argv) {
     }
 
     camera->StopStream();
+    for (auto& th : threads) {
+        th.join();
+    }
 
     std::string fpsText      = " fps = "  + std::to_string(fpsMeasurer.GetFps());
     std::cout << "\nSaved " << frameSaved << " frames to " << folderRaw << " folder with" << fpsText << std::endl;
 
-    sv::DeallocateProcessedImage(processedImage);
 
     return 0;
 }
+
+// run in separate thread
+// TODO: setup workers to handle this in background without wasting time every
+// loop allocating and releasing all this overhead memory
+void SaveAndDisplayJpeg(ICamera *camera, IProcessedImage processedImage, std::string text, std::string folderJpeg, std::string basename,  std::string dateStamp) {
+    common::ImageProcessor processor;
+
+    cv::UMat mImage;
+    uint32_t length = processedImage.length;
+    processor.AllocateMat(processedImage, mImage);
+    processor.DebayerImage(mImage,processedImage.pixelFormat);
+    processor.DrawText(mImage,text);
+    sv::DeallocateProcessedImage(processedImage);
+
+    std::string filenameJpeg = basename + ".jpeg";
+    std::vector<uchar> jpegbuf;
+    Exiv2::ExifData exifData;
+
+    // convert from 16 to 8 bit
+    if (mImage.depth() != CV_8U) {
+        constexpr auto CONVERSION_SCALE_16_TO_8 = 0.00390625;
+        mImage.convertTo(mImage, CV_8U, CONVERSION_SCALE_16_TO_8);
+
+    }
+    cv::imencode(".jpg",mImage, jpegbuf);
+    if (opt_noexif) {
+        SaveFrame(&jpegbuf[0], jpegbuf.size(), filenameJpeg, folderJpeg);
+    } else {
+        Exiv2::Image::AutoPtr eImage = Exiv2::ImageFactory::open(&jpegbuf[0],jpegbuf.size());
+        exifData["Exif.Image.ProcessingSoftware"] = "capture.cpp";
+        exifData["Exif.Image.SubfileType"] = 1;
+        exifData["Exif.Image.ImageDescription"] = "snappy carrots";
+        exifData["Exif.Image.Model"] = "tensorfield ag";
+        exifData["Exif.Image.AnalogBalance"] = opt_gain;
+        exifData["Exif.Image.ExposureTime"] = opt_exposure;
+        exifData["Exif.Image.DateTimeOriginal"] = dateStamp;
+        eImage->setExifData(exifData);
+        eImage->writeMetadata();
+        if (opt_verbose) {
+            Exiv2::ExifData &ed2 = eImage->exifData();
+            exifPrint(ed2);
+        }
+
+        std::string outJpeg = folderJpeg + filenameJpeg;
+        Exiv2::FileIo file(outJpeg);
+        file.open("wb");
+        file.write(eImage->io()); 
+        file.close();
+
+        const std::string curJpeg = "/home/deep/build/snappy/capture/current.jpg";
+        std::ifstream src(outJpeg, std::ios::binary);
+        std::ofstream dst(curJpeg, std::ios::binary);
+        dst << src.rdbuf();
+
+    }
+
+    //cv::Mat dst = cv::imdecode(jpegbuf,1);
+    //cv::imshow("dst", dst);
+    if (opt_verbose) {
+        std::cout << ". " << folderJpeg << filenameJpeg << std::endl << std::flush;
+    }
+    //cv::namedWindow("capture", cv::WINDOW_OPENGL | cv::WINDOW_AUTOSIZE);
+    //cv::imshow("capture", mImage);
+    //cv::waitKey(1);
+}
+
+
 
 
 // set global vars (yikes)
