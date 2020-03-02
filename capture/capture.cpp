@@ -75,25 +75,6 @@ void PrintHelp() {
 
 // *****************************************************************************
 
-void exifPrint(const Exiv2::ExifData exifData)
-{
-    Exiv2::ExifData::const_iterator i = exifData.begin();
-    for (; i != exifData.end(); ++i) {
-        std::cout << std::setw(35) << std::setfill(' ') << std::left
-                  << i->key() << " "
-                  << "0x" << std::setw(4) << std::setfill('0') << std::right
-                  << std::hex << i->tag() << " "
-                  << std::setw(9) << std::setfill(' ') << std::left
-                  << i->typeName() << " "
-                  << std::dec << std::setw(3)
-                  << std::setfill(' ') << std::right
-                  << i->count() << "  "
-                  << std::dec << i->value()
-                  << "\n";
-    }
-}
-
-
 void ProcessArgs(int argc, char** argv);
 void SaveFrame(void *data, uint32_t length, std::string name, std::string folder);
 void SaveAndDisplayJpeg(ICamera *camera, IProcessedImage processedImage, std::string text, std::string folderJpeg, std::string basename,  std::string dateStamp);
@@ -107,6 +88,7 @@ void varyExposure (ICamera *camera);
 std::string GetCurrentWorkingDir();
 std::string GetDateStamp();
 std::string GetDateTimeOriginal();
+void exifPrint(const Exiv2::ExifData exifData);
 
 /*
  * main routine:
@@ -175,6 +157,7 @@ int main(int argc, char **argv) {
         frameCount = opt_minutes * 60 * estimated_fps;
         std::cout << "estimating to capture " << frameCount << " frames at " <<  estimated_fps << "fps " << std::endl;
     }
+    // TODO: use image.date to set filename and exif date information
     const std::string dateStamp  = GetDateStamp();
     //const std::string currentWorkingDir = GetCurrentWorkingDir();
     //const std::string folderBase = "/home/deep/build/snappy/data/images/" + dateStamp + "/";
@@ -191,7 +174,7 @@ int main(int argc, char **argv) {
     mkdir(folderJpeg.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
 
 
-    std::string command = "/usr/local/bin/v4l2-ctl --verbose --all --list-ctrls-menus > " + folderBase + "camera.settings";
+    std::string command = "/usr/local/bin/v4l2-ctl --verbose --all > " + folderBase + "camera.settings";
     std::system( (const char *) command.c_str());
 
 
@@ -239,6 +222,7 @@ int main(int argc, char **argv) {
         std::string filenameRaw  = basename + ".raw";
         SaveFrame(data, length, filenameRaw, folderRaw);
 
+        // TODO: make this vary based on fps to save jpeg approx 1/s
         int skip = 5;
         if (! opt_nodisplay) {
             if ( (i % skip) == 0) {
@@ -332,6 +316,24 @@ void SaveAndDisplayJpeg(ICamera *camera, IProcessedImage processedImage, std::st
     //cv::namedWindow("capture", cv::WINDOW_OPENGL | cv::WINDOW_AUTOSIZE);
     //cv::imshow("capture", mImage);
     //cv::waitKey(1);
+}
+
+
+void exifPrint(const Exiv2::ExifData exifData) {
+    Exiv2::ExifData::const_iterator i = exifData.begin();
+    for (; i != exifData.end(); ++i) {
+        std::cout << std::setw(35) << std::setfill(' ') << std::left
+                  << i->key() << " "
+                  << "0x" << std::setw(4) << std::setfill('0') << std::right
+                  << std::hex << i->tag() << " "
+                  << std::setw(9) << std::setfill(' ') << std::left
+                  << i->typeName() << " "
+                  << std::dec << std::setw(3)
+                  << std::setfill(' ') << std::right
+                  << i->count() << "  "
+                  << std::dec << i->value()
+                  << "\n";
+    }
 }
 
 
