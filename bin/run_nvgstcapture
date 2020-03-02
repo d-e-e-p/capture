@@ -1,0 +1,108 @@
+#!/bin/bash
+#
+
+count=100000
+prefix=/media/deep/E449-8EF21/images/
+dt=$(date +%Y-%m-%d-%H-%M)
+dir=$prefix/$dt
+mkdir -p $dir
+echo "$0 : saving $count images to $dir"
+
+v4l2-ctl --all > $dir/initial_camera.settings
+
+#    --overlayConfig="0, 0, 0, 640, 480" \
+
+time nvgstcapture-1.0 \
+    --sensor-id 0 \
+    --mode 1 \
+    --exposuretimerange="28000 34000" \
+    --gainrange="200 255" \
+    --prev-res=2 \
+    --cus-prev-res=640x480 \
+    --image-res=3 \
+    --image-enc=1 \
+    --enable-meta \
+    --automate \
+    --capture-gap 0 \
+    --capture-auto  \
+    --count 10000 \
+    --file-name $dir/L0
+
+
+v4l2-ctl --all > $dir/final_camera.settings
+
+#Usage:
+#  nvgstcapture-1.0 [OPTION?] Nvidia GStreamer Camera Model Test
+#
+#Help Options:
+#  -h, --help                        Show help options
+#  --help-all                        Show all help options
+#  --help-gst                        Show GStreamer Options
+#
+#Application Options:
+#  --prev-res                        Preview width & height.Range: 2 to 12 (5632x4224) e.g., --prev-res=3
+#  --cus-prev-res                    Custom Preview width & height e.g., --cus-prev-res=1920x1080
+#  --image-res                       Image width & height. Range: 2 to 12 (5632x4224) e.g., --image-res=3
+#  --video-res                       Video width & height. Range: 2 to 9 (3896x2192) e.g., --video-res=3
+#  --camsrc                          Camera Source to use (0=v4l2, 1=csi[default], 2=videotest, 3=eglstream)
+#  -m, --mode                        Capture mode value (1=still 2=video)
+#  -v, --video-enc                   Video encoder type (0=h264[HW] 1=vp8[HW] 2=h265[HW] 3=vp9[HW])
+#  -p, --hw-enc-path                 Frame Work type (0=OMX 1=V4L2 [Default])
+#  -b, --enc-bitrate                 Video encoding Bit-rate(in bytes) e.g., --enc-bitrate=4000000
+#  --enc-controlrate                 Video encoding Bit-rate control method 0 = Disable, 1 = variable(Default), 2 = constant e.g., --enc-controlrate=1
+#  --enc-EnableTwopassCBR            Enable two pass CBR while encoding 0 = Disable, 1 = Enable e.g., --enc-EnableTwopassCBR=1
+#  --enc-profile                     Video encoder profile For H.264: 0=Baseline, 1=Main, 2=High
+#  -J, --image-enc                   Image encoder type (0=jpeg_SW[jpegenc] 1=jpeg_HW[nvjpegenc])
+#  -k, --file-type                   Container file type (0=mp4 1=3gp 2=mkv)
+#  --file-name                       Captured file name. nvcamtest is used by default
+#  --color-format                    Color format to use (0=I420,1=NV12[For CSI only and default for CSI], 2=YUY2[For V4L2 only, default for v4l2])
+#  --enable-meta                     Enable Sensor MetaData reporting
+#  --app-profile                     Enable KPI profiling
+#  --kpi-numbers                     Enable KPI measurement
+#  --cap-dev-node                    Video capture device node (0=/dev/video0[default], 1=/dev/video1, 2=/dev/video2) e.g., --cap-dev-node=0
+#  --svs                             [For USB] (=) chain for video Preview. [For CSI only] use "nvoverlaysink"
+#  --eglConfig                       EGL window Coordinates (x_pos y_pos) in that order  e.g., --eglConfig="50 100"
+#  --orientation                     Camera sensor orientation value
+#  -w, --whitebalance                Capture whitebalance value
+#  --timeout                         Capture timeout value
+#  --saturation                      Camera Saturation value
+#  --sensor-id                       Camera Sensor ID value
+#  --exposuretimerange               Property to adjust exposure time range in nanoseconds e.g., --exposuretimerange="34000 358733000"
+#  --gainrange                       Property to adjust gain range e.g., --gainrange="1 16"
+#  --ispdigitalgainrange             Property to adjust digital gain range e.g., --ispdigitalgainrange="1 8"
+#  --aelock                          Enable AE Lock, default is disabled
+#  --awblock                         Enable AWB Lock, default is disabled
+#  --exposurecompensation            Property to adjust exposure compensation e.g., --exposurecompensation=0.5
+#  --aeantibanding                   Property to set the auto exposure antibanding mode e.g., --aeantibanding=2
+#  --tnr-mode                        Property to select temporal noise reduction mode e.g., --tnr-mode=2
+#  --tnr-strength                    Property to adjust temporal noise reduction strength e.g., --tnr-strength=0.5
+#  --ee-mode                         Property to select edge enhancement mode e.g., --ee-mode=2
+#  --ee-strength                     Property to adjust edge enhancement strength e.g., --ee-strength=0.5
+#  --display-id                      [For nvoverlaysink only] Display ID value
+#  --overlayConfig                   Overlay Configuration Options index and coordinates in (index, x_pos, y_pos, width, height) order  e.g. --overlayConfig="0, 0, 0, 1280, 720"
+#  -A, --automate                    Run application in automation mode
+#  -S, --start-time                  Start capture after specified time in seconds. Default = 5 sec (use with --automate or -A only)
+#  -Q, --quit-after                  Quit application once automation is done after specified time in seconds. Default = 0 sec (use with --automate or -A only)
+#  -C, --count                       Number of iterations of automation testcase. Default = 1 (use with --automate or -A only)
+#  -N, --num-sensors                 Number of sensors  (use with --automate or -A only)
+#  --capture-gap                     Number of milliseconds between successive image/video capture. Default = 250 msec (use with --automate and --capture-auto only)
+#  --capture-time                    Capture video for specified time in seconds. Default = 10 sec (use with --automate and --capture-auto only)
+#  --toggle-mode                     Toggle between still and video capture modes for count number of times (use with --automate or -A only)
+#  --capture-auto                    Do image/video capture in automation mode for count number of times(use with --automate or -A only)
+#  --toggle-sensor                   Toggle between num_sensors if given otherwise between sensor-id 0 and 1 (use with --automate or -A only)
+#  --enum-wb                         Enumerate all white-balance modes for count number of times (use with --automate or -A only)
+#  --enum-st                         Enumerate saturation value through 0 to 2 by a step of 0.1 for count number of times (use with --automate or -A only)
+#
+#Supported resolutions in case of NvArgusCamera
+#  (2) : 640x480
+#  (3) : 1280x720
+#  (4) : 1920x1080
+#  (5) : 2104x1560
+#  (6) : 2592x1944
+#  (7) : 2616x1472
+#  (8) : 3840x2160
+#  (9) : 3896x2192
+#  (10): 4208x3120
+#  (11): 5632x3168
+#  (12): 5632x4224
+#
