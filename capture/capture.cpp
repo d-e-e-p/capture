@@ -49,6 +49,7 @@ bool opt_vary_exposure = false;
 int  opt_min_exposure = -1; 
 int  opt_max_exposure = -1;
 
+bool opt_nosave = false;
 bool opt_nodisplay = false;
 bool opt_noexif = false;
 bool opt_verbose = false;
@@ -66,6 +67,7 @@ void PrintHelp() {
               "--vary_exposure:     sweep exposure from min to max\n"
               "--min_exposure:      min gain for sweep\n"
               "--max_exposure:      max gain for sweep\n"
+              "--nosave:            no saving any images--just display\n"
               "--nodisplay:         no jpeg or display--just raw image dump\n"
               "--noexif:            no exif metadata in jpeg\n"
               "--verbose:           verbose\n"
@@ -160,8 +162,8 @@ int main(int argc, char **argv) {
     // TODO: use image.date to set filename and exif date information
     const std::string dateStamp  = GetDateStamp();
     //const std::string currentWorkingDir = GetCurrentWorkingDir();
-    //const std::string folderBase = "/home/deep/build/snappy/data/images/" + dateStamp + "/";
-    const std::string folderBase = "/media/deep/KINGSTON/data/images/" + dateStamp + "/";
+    const std::string folderBase = "/home/deep/build/snappy/data/images/" + dateStamp + "/";
+    //const std::string folderBase = "/media/deep/KINGSTON/data/images/" + dateStamp + "/";
     const std::string folderRaw  = folderBase + "raw/";
     const std::string folderJpeg = folderBase + "jpeg/";
 
@@ -223,13 +225,13 @@ int main(int argc, char **argv) {
         SaveFrame(data, length, filenameRaw, folderRaw);
 
         // TODO: make this vary based on fps to save jpeg approx 1/s
-        int skip = 5;
+        int skip = 1;
         if (! opt_nodisplay) {
             if ( (i % skip) == 0) {
                 IProcessedImage processedImage = sv::AllocateProcessedImage(camera->GetImageInfo());
                 sv::ProcessImage(image, processedImage, SV_ALGORITHM_AUTODETECT);
-                threads.push_back(std::thread(SaveAndDisplayJpeg, camera, processedImage, text, folderJpeg,  basename, dateStamp));
-                //SaveAndDisplayJpeg (camera, processedImage, text, folderJpeg,  basename, dateStamp);
+                //threads.push_back(std::thread(SaveAndDisplayJpeg, camera, processedImage, text, folderJpeg,  basename, dateStamp));
+                SaveAndDisplayJpeg (camera, processedImage, text, folderJpeg,  basename, dateStamp);
             }
          }
 
@@ -295,16 +297,18 @@ void SaveAndDisplayJpeg(ICamera *camera, IProcessedImage processedImage, std::st
             exifPrint(ed2);
         }
 
-        std::string outJpeg = folderJpeg + filenameJpeg;
-        Exiv2::FileIo file(outJpeg);
-        file.open("wb");
-        file.write(eImage->io()); 
-        file.close();
+        if (! opt_nosave) {
+            std::string outJpeg = folderJpeg + filenameJpeg;
+            Exiv2::FileIo file(outJpeg);
+            file.open("wb");
+            file.write(eImage->io()); 
+            file.close();
 
-        const std::string curJpeg = "/home/deep/build/snappy/capture/current.jpg";
-        std::ifstream src(outJpeg, std::ios::binary);
-        std::ofstream dst(curJpeg, std::ios::binary);
-        dst << src.rdbuf();
+            const std::string curJpeg = "/home/deep/build/snappy/capture/current.jpg";
+            std::ifstream src(outJpeg, std::ios::binary);
+            std::ofstream dst(curJpeg, std::ios::binary);
+            dst << src.rdbuf();
+        }
 
     }
 
@@ -313,9 +317,9 @@ void SaveAndDisplayJpeg(ICamera *camera, IProcessedImage processedImage, std::st
     if (opt_verbose) {
         std::cout << ". " << folderJpeg << filenameJpeg << std::endl << std::flush;
     }
-    //cv::namedWindow("capture", cv::WINDOW_OPENGL | cv::WINDOW_AUTOSIZE);
-    //cv::imshow("capture", mImage);
-    //cv::waitKey(1);
+    cv::namedWindow("capture", cv::WINDOW_OPENGL | cv::WINDOW_AUTOSIZE);
+    cv::imshow("capture", mImage);
+    cv::waitKey(1);
 }
 
 
@@ -353,6 +357,7 @@ void ProcessArgs(int argc, char** argv) {
         OptVaryExposure,
         OptMinExposure,
         OptMaxExposure,
+        OptNoSave,
         OptNoDisplay,
         OptNoExif,
         OptVerbose
@@ -368,6 +373,7 @@ void ProcessArgs(int argc, char** argv) {
         {"vary_exposure", no_argument,        0,    OptVaryExposure },
         {"min_exposure",  required_argument,  0,    OptMinExposure },
         {"max_exposure",  required_argument,  0,    OptMaxExposure },
+        {"nosave",        no_argument,        0,    OptNoSave },
         {"nodisplay",     no_argument,        0,    OptNoDisplay },
         {"noexif",        no_argument,        0,    OptNoExif },
         {"verbose",       no_argument,        0,    OptVerbose },
@@ -421,6 +427,10 @@ void ProcessArgs(int argc, char** argv) {
         case OptMaxExposure:
             opt_max_exposure = std::stoi(optarg);
             std::cout << "Max exposure set to: " << opt_max_exposure << std::endl;
+            break;
+        case OptNoSave:
+            opt_nosave = true;
+            std::cout << "no saving raw or jpeg files" << std::endl;
             break;
         case OptNoExif:
             opt_noexif = true;
