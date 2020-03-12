@@ -16,6 +16,7 @@
 #include <exiv2/exiv2.hpp>
 
 #include <atomic>
+#include <ios>
 #include <condition_variable>
 #include <ctime>
 #include <fstream>
@@ -79,7 +80,8 @@ void PrintHelp() {
 
 void ProcessArgs(int argc, char** argv);
 void SaveFrame(void *data, uint32_t length, std::string name, std::string folder);
-void SaveAndDisplayJpeg(ICamera *camera, IProcessedImage processedImage, std::string text, std::string folderJpeg, std::string basename,  std::string dateStamp);
+void SaveAndDisplayJpegDirect(ICamera *camera, IProcessedImage processedImage, std::string text, std::string folderJpeg, std::string basename,  std::string dateStamp);
+void SaveJpegExternal(void *data, uint32_t length, std::string name, std::string folderDng, std::string folderJpeg, std::string basename,  std::string dateStamp);
 std::string getCurrentControlValue(IControl *control);
 void setGain (ICamera *camera, uint32_t value);
 void setExposure (ICamera *camera, uint32_t value);
@@ -91,6 +93,48 @@ std::string GetCurrentWorkingDir();
 std::string GetDateStamp();
 std::string GetDateTimeOriginal();
 void exifPrint(const Exiv2::ExifData exifData);
+
+char* readDngHeader() {
+
+    FILE *fp = NULL; 
+    char *headerdata = NULL;
+    fs::path headerfile = "/home/deep/build/snappy/bin/dcg_header.bin";
+    uint32_t headersize = fs::file_size(headerfile);
+    fp = fopen(headerfile.c_str(), "rb");
+    //std::cout << "reading in " << headerfile ;
+    headerdata = (char*) malloc (sizeof(char) * headersize);
+    fread(headerdata, sizeof(char), headersize, fp);
+    fclose(fp);
+    //std::cout << " header file size = " << headersize << std::endl;
+    return headerdata;
+
+}
+
+int SaveFrameHeader(void *data, uint32_t length, std::string name, std::string folder) {
+
+    FILE *fp = NULL; 
+    char *headerdata = NULL;
+    fs::path headerfile = "/home/deep/build/snappy/bin/dcg_header.bin";
+    uint32_t headersize = fs::file_size(headerfile);
+    fp = fopen(headerfile.c_str(), "rb");
+    //std::cout << "reading in " << headerfile ;
+    headerdata = (char*) malloc (sizeof(char) * headersize);
+    fread(headerdata, sizeof(char), headersize, fp);
+    fclose(fp);
+    //std::cout << " header file size = " << headersize << std::endl;
+
+    //char *headerdata = readDngHeader();
+    //std::cout << " header file size = " << sizeof(headerdata) << std::endl;
+
+    std::string file = folder + name;
+    remove(file.c_str());
+
+    int fd = open (file.c_str(), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    write(fd, headerdata, headersize);
+    write(fd, data, length);
+    close(fd);
+
+}
 
 /*
  * main routine:
@@ -166,6 +210,7 @@ int main(int argc, char **argv) {
     //const std::string folderBase = "/media/deep/KINGSTON/data/images/" + dateStamp + "/";
     const std::string folderRaw  = folderBase + "raw/";
     const std::string folderJpeg = folderBase + "jpeg/";
+    const std::string folderDng =  folderBase +  "dng/";
 
     mkdir(folderBase.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
 
@@ -174,6 +219,9 @@ int main(int argc, char **argv) {
 
     std::cout << "writing to folder : " << folderJpeg << std::endl;
     mkdir(folderJpeg.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+
+    std::cout << "writing to folder : " << folderDng << std::endl;
+    mkdir(folderDng.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
 
 
     std::string command = "/usr/local/bin/v4l2-ctl --verbose --all > " + folderBase + "camera.settings";
@@ -223,15 +271,17 @@ int main(int argc, char **argv) {
         length = image.length;
         std::string filenameRaw  = basename + ".raw";
         SaveFrame(data, length, filenameRaw, folderRaw);
+        //threads.push_back(std::thread(SaveJpegExternal, data, length, text, folderDng, folderJpeg,  basename, dateStamp));
+        SaveJpegExternal( data, length, text, folderDng, folderJpeg,  basename, dateStamp);
 
         // TODO: make this vary based on fps to save jpeg approx 1/s
         int skip = 1;
         if (! opt_nodisplay) {
             if ( (i % skip) == 0) {
-                IProcessedImage processedImage = sv::AllocateProcessedImage(camera->GetImageInfo());
-                sv::ProcessImage(image, processedImage, SV_ALGORITHM_AUTODETECT);
+                //IProcessedImage processedImage = sv::AllocateProcessedImage(camera->GetImageInfo());
+                //sv::ProcessImage(image, processedImage, SV_ALGORITHM_AUTODETECT);
                 //threads.push_back(std::thread(SaveAndDisplayJpeg, camera, processedImage, text, folderJpeg,  basename, dateStamp));
-                SaveAndDisplayJpeg (camera, processedImage, text, folderJpeg,  basename, dateStamp);
+                //SaveJpegExternal (camera, processedImage, text, folderJpeg,  basename, dateStamp);
             }
          }
 
@@ -258,7 +308,7 @@ int main(int argc, char **argv) {
 // run in separate thread
 // TODO: setup workers to handle this in background without wasting time every
 // loop allocating and releasing all this overhead memory
-void SaveAndDisplayJpeg(ICamera *camera, IProcessedImage processedImage, std::string text, std::string folderJpeg, std::string basename,  std::string dateStamp) {
+void SaveAndDisplayJpegDirect(ICamera *camera, IProcessedImage processedImage, std::string text, std::string folderJpeg, std::string basename,  std::string dateStamp) {
     common::ImageProcessor processor;
 
     cv::UMat mImage;
@@ -321,6 +371,33 @@ void SaveAndDisplayJpeg(ICamera *camera, IProcessedImage processedImage, std::st
     cv::imshow("capture", mImage);
     cv::waitKey(1);
 }
+
+void executeProgram(std::string programName) {
+    system(programName.c_str());
+}
+
+void SaveJpegExternal(void *data, uint32_t length, std::string text, std::string folderDng, std::string folderJpeg, std::string basename,  std::string dateStamp) {
+
+    std::string filenameDng = basename + ".dng";
+    SaveFrameHeader(data, length, filenameDng, folderDng);
+    std::cout << "written to file " << folderDng << filenameDng << std::endl;
+
+    std::string filenameJpg = basename + ".jpg";
+    std::string programName = "rawtherapee-cli -Y -o /home/deep/build/snappy/capture/next.jpg -c " + folderDng + filenameDng;
+    //std::cout << "running cmd: " << programName << std::endl;
+    std::thread worker (executeProgram, programName);
+    worker.join();
+
+
+    programName = "convert -pointsize 30 -fill yellow -draw \'text 10,50 \" " + text + " \" \'   " + "/home/deep/build/snappy/capture/next.jpg" + " " + folderJpeg + filenameJpg ;
+    //std::cout << "running cmd: " << programName << std::endl;
+    std::thread worker2 (executeProgram, programName);
+    worker2.join();
+
+    fs::copy(folderJpeg + filenameJpg,"/home/deep/build/snappy/capture/current.jpg", fs::copy_options::overwrite_existing);
+
+}
+
 
 
 void exifPrint(const Exiv2::ExifData exifData) {
@@ -645,3 +722,4 @@ void SaveFrame(void *data, uint32_t length, std::string name, std::string folder
 
     close(fd);
 }
+
