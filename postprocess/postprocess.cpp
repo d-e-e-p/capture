@@ -20,6 +20,9 @@ using namespace std;
 namespace fs = std::experimental::filesystem;
 
 
+//dng header
+char* g_dng_headerdata = NULL;
+int   g_dng_headerlength = 0;
 
 enum bayer_pattern_e {
     BGGR,
@@ -30,9 +33,53 @@ enum bayer_pattern_e {
 // Pixel Format  : 'RG10' (10-bit Bayer RGRG/GBGB)
 // see https://linuxtv.org/downloads/v4l-dvb-apis/uapi/v4l/pixfmt-srggb10.html
 
+int convertRaw2Dng(fs::path rawname, fs::path dngname) {
+    char *imagedata = NULL;
+
+    // determine size of raw file assumed to be 16 bit raw 
+
+    //Image dimension.
+    //  width is 768 stride = 728 width + 40 margin
+  	//  but some setting sometimes seems to omit stride...so safer to compute width
+	//
+    int imagesize = fs::file_size(rawname);
+    int height = 544;
+    int width =  imagesize / (2 * height); // 2 bytes per pixel
+    //int width =  728; // 768 stride = 728 width + 40 margin
+    int framesize = width * height; 
+	cout << " in : " << rawname << " size = " << imagesize <<  " res = " << Point(width, height) << endl;
+
+	imagedata = new char [imagesize];
+    ifstream fraw (rawname, ios::in|ios::binary);
+  	fraw.read (imagedata, imagesize);
+    fraw.close();
 
 
-int ColorPlaneInterpolation(fs::path rawname, fs::path pngname) {
+   // read in header data once
+    if (g_dng_headerdata == nullptr) {
+        //fs::path headerfile = "/home/deep/build/snappy/bin/dng_header.bin";
+        fs::path headerfile = "/home/user/build/tensorfield/snappy/bin/dng_header.bin";
+        g_dng_headerlength = fs::file_size(headerfile);
+		cout << " in : " << headerfile << " size = " << g_dng_headerlength << endl;
+
+        g_dng_headerdata = new char [g_dng_headerlength];
+		ifstream fhead (headerfile, ios::in|ios::binary);
+		fhead.read (g_dng_headerdata, g_dng_headerlength);
+		fhead.close();
+    }
+
+    cout << "out : " << dngname << endl;
+    remove(dngname.c_str());
+    ofstream outfile (dngname,ofstream::binary);
+    outfile.write (reinterpret_cast<const char*>(g_dng_headerdata), g_dng_headerlength);
+    outfile.write (reinterpret_cast<const char*>(imagedata), imagesize);
+    outfile.close();
+
+
+}
+
+
+int ColorPlaneInterpolation(fs::path rawname, fs::path pgmname) {
     FILE *fp = NULL;
     char *imagedata = NULL;
 
@@ -73,8 +120,8 @@ int ColorPlaneInterpolation(fs::path rawname, fs::path pngname) {
 	double min, max;
 	minMaxLoc(image_16bit, &min, &max);
 	cout << "image_16bit (min,max) = " << Point(min,max) <<  endl;
-    cout << "writing to : " << pngname << endl;
-    imwrite(pngname.c_str(), image_16bit);
+    cout << "writing to : " << pgmname << endl;
+    imwrite(pgmname.c_str(), image_16bit);
 	//image_16bit.convertTo(image_16bit, CV_16UC1, 256.0/max);
     //imwrite("image_16bit.pgm", image_16bit);
     //cout << image_16bit << endl;
@@ -204,7 +251,7 @@ Red:RGB; Green:RGB; Blue:RGB
 	Mat final_color_matrixed = color_matrixed_linear.reshape(3, height); // or should be reshape (height, width, CV_32FC3);
 	cout << "final_color_matrixed size = " << final_color_matrixed.size() << std::endl;
 	final_color_matrixed.convertTo(final_color_matrixed, CV_32FC3, 512);
-	imwrite(pngname.c_str(), final_color_matrixed);
+	imwrite(pgmname.c_str(), final_color_matrixed);
 
 
   return 0;
@@ -213,19 +260,18 @@ Red:RGB; Green:RGB; Blue:RGB
 
 
  
-std::vector<std::string> get_filenames( std::experimental::filesystem::path path )
+std::vector<std::string> get_filenames( fs::path path )
 {
-    namespace stdfs = std::experimental::filesystem ;
 
-    std::vector<std::string> filenames ;
+    vector<string> filenames ;
     
     // http://en.cppreference.com/w/cpp/experimental/fs/directory_iterator
-    const stdfs::directory_iterator end{} ;
+    const fs::directory_iterator end{} ;
     
-    for( stdfs::directory_iterator iter{path} ; iter != end ; ++iter )
+    for( fs::directory_iterator iter{path} ; iter != end ; ++iter )
     {
         // http://en.cppreference.com/w/cpp/experimental/fs/is_regular_file 
-        if( stdfs::is_regular_file(*iter) ) // comment out if all names (names of directories tc.) are required
+        if( fs::is_regular_file(*iter) ) // comment out if all names (names of directories tc.) are required
             filenames.push_back( iter->path().string() ) ;
     }
 
@@ -235,10 +281,18 @@ std::vector<std::string> get_filenames( std::experimental::filesystem::path path
 int process_one_file(fs::path rawname) {
 
 	if (rawname.extension() == ".raw") {
-		fs::path pngname = rawname;
-		pngname.replace_extension(".png");
-		//cout << "name = " << rawname << " pngname = " << pngname << endl;
-		ColorPlaneInterpolation(rawname, pngname);		
+		fs::path dngname = rawname;
+		dngname.replace_extension(".dng");
+
+		// if raw directory is called "raw", then replace with "dng"
+		if (dngname.parent_path().stem() == "raw") {
+			string newpath = dngname.parent_path().parent_path().string() + "/dng/";
+			fs::create_directories(newpath);
+			dngname = newpath + dngname.stem().string() + ".dng";
+		}
+
+		cout << "name = " << rawname << " dngname = " << dngname << endl;
+		convertRaw2Dng(rawname, dngname);		
 	}
 
 
