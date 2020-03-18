@@ -56,8 +56,8 @@ typedef boost::iostreams::stream<TeeDevice> TeeStream;
 // TODO: hold this in a map instead, eg opt[gain] = 20
 int  opt_minutes = 0;
 int  opt_frames = 1000;
-int  opt_gain = 20;
-int  opt_exposure = 1000; // max = 8256
+int  opt_gain = 10;
+int  opt_exposure = 500; // max = 8256
 
 // -1 value for min/max sweep => use sensor min/max
 bool opt_vary_gain = false;
@@ -368,8 +368,10 @@ int main(int argc, char **argv) {
             cerr << "ERR: image.data null" << endl;
             break;
         }
-        string filenameRaw  = basename + ".raw";
-        SaveFrame(image.data, image.length, folderRaw + filenameRaw);
+        if (! opt_nosave) {
+            string filenameRaw  = basename + ".raw";
+            SaveFrame(image.data, image.length, folderRaw + filenameRaw);
+        }
         //saveJpgExternal( image.data, image.length, text, folderDng, folderJpg,  basename, dateStamp);
 
         //
@@ -492,8 +494,9 @@ void saveJpgExternal(void *data, uint32_t length, string text, string folderDng,
     }
 
     string filenameJpg = basename + ".jpg";
-    string programName = "rawtherapee-cli -Y -o /home/deep/build/snappy/capture/next.jpg -q -p /home/deep/build/snappy/capture/wb.pp3 -c " + folderDng + filenameDng;
-    programName += "; convert -pointsize 30 -fill yellow -draw \'text 10,50 \" " + text + " \" \'   " + "/home/deep/build/snappy/capture/next.jpg" + " " + folderJpg + filenameJpg ;
+    //string programName = "rawtherapee-cli -Y -o /home/deep/build/snappy/capture/next.jpg -q -p /home/deep/build/snappy/bin/wb.pp4 -c " + folderDng + filenameDng;
+    string programName = "rawtherapee-cli -Y -o /home/deep/build/snappy/capture/next.jpg -q -c " + folderDng + filenameDng;
+    programName += "; convert -pointsize 20 -fill yellow -draw \'text 10,50 \" " + text + " \" \'   " + "/home/deep/build/snappy/capture/next.jpg" + " " + folderJpg + filenameJpg ;
     if (opt_verbose) {
         cout << "running cmd=" << programName << endl;
     }
