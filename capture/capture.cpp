@@ -1,9 +1,10 @@
 /*
- * capture frames
+ * capture raw frames from framos camera over csi
+ * 
  *  (c) 2020 Tensorfield Ag
+ * 
  */
 
-// modified by tensorfield ag feb 2020
 //
 using namespace std;
 
@@ -53,7 +54,7 @@ typedef boost::iostreams::stream<TeeDevice> TeeStream;
 
 
 // global vars -- yikes
-// TODO: hold this in a map instead, eg opt[gain] = 20
+// TODO: hold this in a structure instead...
 int  opt_minutes = 0;
 int  opt_frames = 1000;
 int  opt_gain = 10;
@@ -130,63 +131,10 @@ string GetCurrentWorkingDir();
 string GetDateStamp();
 string GetDateTimeOriginal();
 void exifPrint(const Exiv2::ExifData exifData);
+int SaveFrameHeader(void *data, uint32_t length, string filename);
+void generateGainExposureTable();
 
-
-int SaveFrameHeader(void *data, uint32_t length, string filename) {
-
-    // read in header data once
-    if (g_dng_headerdata == nullptr) {
-        FILE *fp = nullptr; 
-        fs::path headerfile = "/home/deep/build/snappy/bin/dng_header.bin";
-        if (opt_verbose) {
-            cout << "reading in " << headerfile ;
-        }
-        g_dng_headerlength = fs::file_size(headerfile);
-        fp = fopen(headerfile.c_str(), "rb");
-        g_dng_headerdata = (char*) malloc (sizeof(char) * g_dng_headerlength);
-        fread(g_dng_headerdata, sizeof(char), g_dng_headerlength, fp);
-        fclose(fp);
-    }
-
-    remove(filename.c_str());
-    ofstream outfile (filename,ofstream::binary);
-    outfile.write (reinterpret_cast<const char*>(g_dng_headerdata), g_dng_headerlength);
-    outfile.write (reinterpret_cast<const char*>(data), length);
-    outfile.close();
-
-    /*
-    int fd = open (file.c_str(), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-    write(fd, g_dng_headerdata, sizeof(g_dng_headerdata));
-    write(fd, data, length);
-    close(fd);
-    */
-
-}
-
-void generateGainExposureTable() {
-
-
-    for (int value_gain = opt_min_gain; value_gain < opt_max_gain; value_gain += opt_step_gain) {
-        for (int value_exposure = opt_min_exposure; value_exposure < opt_max_exposure; value_exposure += opt_step_exposure) {
-            g_gaex_table.push_back(cv::Point(value_gain, value_exposure ));
-            //cout << "Vary table (gain,exposure) =  " << cv::Point(value_gain, value_exposure) << endl;
-        }
-    }
-
-    cout << "Generated gain+exposure table:" << endl;
-    cout << "    gain range =     " << cv::Point(opt_min_gain, opt_max_gain) << " in steps of " << opt_step_gain << endl;
-    cout << "    exposure range = " << cv::Point(opt_min_exposure, opt_max_exposure) << " in steps of " << opt_step_exposure << endl;
-    cout << "    total values in sweep  =  " << g_gaex_table.size() << endl;
-
-    if (false) {
-        for (auto it : g_gaex_table) {
-            cout << it << "\n";
-        }
-    }
-
-
-}
-
+// *****************************************************************************
 
 /*
  * main routine:
@@ -352,8 +300,13 @@ int main(int argc, char **argv) {
         }
 
         // c++ does have reasonable printf until c++20 sigh.
+        // if opt/gain are being changed, used long name...
         char buff[BUFSIZ];
-        snprintf(buff, sizeof(buff), "imgG%03dE%04dF%0*d", opt_gain, opt_exposure , maxIntegerWidth, num_frames++);
+        if (opt_vary_both or opt_vary_gain or opt_vary_exposure) {
+            snprintf(buff, sizeof(buff), "imgG%03dE%04dF%0*d", opt_gain, opt_exposure , maxIntegerWidth, num_frames++);
+        } else {
+            snprintf(buff, sizeof(buff), "img%0*d", maxIntegerWidth, num_frames++);
+        }
         string basename = buff;
 
         string fpsText      = " fps = "  + to_string(fpsMeasurer.GetFps());
@@ -369,8 +322,8 @@ int main(int argc, char **argv) {
             break;
         }
         if (! opt_nosave) {
-            string filenameRaw  = basename + ".raw";
-            SaveFrame(image.data, image.length, folderRaw + filenameRaw);
+            string filenameRaw  = folderRaw + basename + ".raw";
+            SaveFrame(image.data, image.length, filenameRaw);
         }
         //saveJpgExternal( image.data, image.length, text, folderDng, folderJpg,  basename, dateStamp);
 
@@ -394,7 +347,9 @@ int main(int argc, char **argv) {
         std::chrono::nanoseconds ns(1);
         auto status = future.wait_for(ns);
         if (status == std::future_status::ready) {
-            future = std::async(std::launch::async, saveJpgExternal, image.data, image.length, text, folderDng, folderJpg,  basename, dateStamp);
+            char *imagedata = new char [image.length];
+            memcpy(imagedata,image.data,image.length);
+            future = std::async(std::launch::async, saveJpgExternal, imagedata, image.length, text, folderDng, folderJpg,  basename, dateStamp);
         } 
 
 
@@ -416,6 +371,54 @@ int main(int argc, char **argv) {
 
     return 0;
 }
+
+int SaveFrameHeader(void *data, uint32_t datalength, string filename) {
+
+    // read in header data once
+    if (g_dng_headerdata == nullptr) {
+        FILE *fp = nullptr; 
+        fs::path headerfile = "/home/deep/build/snappy/bin/dng_header.bin";
+        g_dng_headerlength = fs::file_size(headerfile);
+        cout << " dng header : " << headerfile << " size = " << g_dng_headerlength << endl << flush;
+        g_dng_headerdata = new char [g_dng_headerlength];
+        ifstream fhead (headerfile, ios::in|ios::binary);
+        fhead.read (g_dng_headerdata, g_dng_headerlength);
+        fhead.close();
+    }
+
+    remove(filename.c_str());
+    ofstream outfile (filename,ofstream::binary);
+    outfile.write (reinterpret_cast<const char*>(g_dng_headerdata), g_dng_headerlength);
+    outfile.write (reinterpret_cast<const char*>(data), datalength);
+    outfile.close();
+
+}
+
+void generateGainExposureTable() {
+
+
+    for (int value_gain = opt_min_gain; value_gain < opt_max_gain; value_gain += opt_step_gain) {
+        for (int value_exposure = opt_min_exposure; value_exposure < opt_max_exposure; value_exposure += opt_step_exposure) {
+            g_gaex_table.push_back(cv::Point(value_gain, value_exposure ));
+            //cout << "Vary table (gain,exposure) =  " << cv::Point(value_gain, value_exposure) << endl;
+        }
+    }
+
+    cout << "Generated gain+exposure table:" << endl;
+    cout << "    gain range =     " << cv::Point(opt_min_gain, opt_max_gain) << " in steps of " << opt_step_gain << endl;
+    cout << "    exposure range = " << cv::Point(opt_min_exposure, opt_max_exposure) << " in steps of " << opt_step_exposure << endl;
+    cout << "    total values in sweep  =  " << g_gaex_table.size() << endl;
+
+    if (false) {
+        for (auto it : g_gaex_table) {
+            cout << it << "\n";
+        }
+    }
+
+
+}
+
+
 
 // run in separate thread
 // TODO: setup workers to handle this in background without wasting time every
@@ -487,22 +490,29 @@ void saveAndDisplayJpgDirect(ICamera *camera, IProcessedImage processedImage, st
 
 void saveJpgExternal(void *data, uint32_t length, string text, string folderDng, string folderJpg, string basename,  string dateStamp) {
 
-    string filenameDng = basename + ".dng";
-    SaveFrameHeader(data, length, folderDng + filenameDng);
+    string filenameDng = folderDng + basename + ".dng";
+    SaveFrameHeader(data, length, filenameDng);
     if (opt_verbose) {
-        cout << "written to file " << folderDng << filenameDng << endl;
+        cout << "written to file " << filenameDng << endl;
+    }
+    free(data);
+
+    // long names => smaller font
+    int pointsize = 20;
+    if (opt_vary_both or opt_vary_gain or opt_vary_exposure) {
+        pointsize = 15;
     }
 
-    string filenameJpg = basename + ".jpg";
-    //string programName = "rawtherapee-cli -Y -o /home/deep/build/snappy/capture/next.jpg -q -p /home/deep/build/snappy/bin/wb.pp4 -c " + folderDng + filenameDng;
-    string programName = "rawtherapee-cli -Y -o /home/deep/build/snappy/capture/next.jpg -q -c " + folderDng + filenameDng;
-    programName += "; convert -pointsize 20 -fill yellow -draw \'text 10,50 \" " + text + " \" \'   " + "/home/deep/build/snappy/capture/next.jpg" + " " + folderJpg + filenameJpg ;
+    string filenameJpg = folderJpg + basename + ".jpg";
+    //string cmd = "rawtherapee-cli -Y -o /home/deep/build/snappy/capture/next.jpg -q -p /home/deep/build/snappy/bin/wb.pp4 -c " + folderDng + filenameDng;
+    string cmd = "rawtherapee-cli -Y -o /home/deep/build/snappy/capture/next.jpg -q -c " +  filenameDng;
+    cmd += "; magick /home/deep/build/snappy/capture/next.jpg -clahe 25x25%+128+2 -pointsize " + to_string(pointsize) + " -font Inconsolata -fill yellow -gravity East -draw \'translate 20,230 rotate 90 text 0,0 \" " + text + " \" \'   " + filenameJpg ;
     if (opt_verbose) {
-        cout << "running cmd=" << programName << endl;
+        cout << "running cmd=" << cmd << endl;
     }
-    //cout << "running cmd: " << programName << endl;
-    system( (const char *) programName.c_str());
-    fs::copy(folderJpg + filenameJpg,"/home/deep/build/snappy/capture/current.jpg", fs::copy_options::overwrite_existing);
+    //cout << "running cmd: " << cmd << endl;
+    system( (const char *) cmd.c_str());
+    fs::copy(filenameJpg,"/home/deep/build/snappy/capture/current.jpg", fs::copy_options::overwrite_existing);
 
 }
 
@@ -528,7 +538,6 @@ void exifPrint(const Exiv2::ExifData exifData) {
 
 
 
-// set global vars (yikes)
 void ProcessArgs(int argc, char** argv) {
     const char* const short_opts = "-:";
     enum Option {
@@ -831,6 +840,7 @@ void varyExposure (ICamera *camera) {
 
 }
 
+// TODO: return index of current iteration
 void varyBoth (ICamera *camera) {
 
     // table empty? make.
