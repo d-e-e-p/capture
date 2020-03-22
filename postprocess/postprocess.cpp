@@ -275,6 +275,7 @@ std::vector<std::string> get_filenames( fs::path path )
             filenames.push_back( iter->path().string() ) ;
     }
 
+	sort(filenames.begin(), filenames.end());
     return filenames ;
 }
 
@@ -291,8 +292,13 @@ int process_one_file(fs::path rawname) {
 			dngname = newpath + dngname.stem().string() + ".dng";
 		}
 
-		cout << "name = " << rawname << " dngname = " << dngname << endl;
-		convertRaw2Dng(rawname, dngname);		
+		if (!fs::exists( fs::status(dngname) )) {
+			//cout << "convert " << rawname << " -> " << dngname << endl;
+			convertRaw2Dng(rawname, dngname);		
+		} else {
+			cout << "skipping " << rawname << " -> " << dngname << endl;
+		}
+		
 	}
 
 
@@ -300,15 +306,17 @@ int process_one_file(fs::path rawname) {
 
 int main(int argc, char** argv ) {
 
-  if ( argc != 2 ) {
-    printf("usage: postprocess <dir_with_raw_image_files>\n");
+  if ( argc < 2 ) {
+    printf("usage: postprocess <dir_with_raw_image_files> ...\n");
     return -1;
   }
 
-  fs::path dir = argv[1];
-  for( const auto& name : get_filenames( dir ) ) {
-	//cout << name << '\n' ;
-	process_one_file(name);
-  }	
+  for (int i=1; i<argc; i++) {
+	fs::path dir = argv[i];
+	for( const auto& name : get_filenames( dir ) ) {
+		//cout << name << '\n' ;
+		process_one_file(name);
+	}	
+  }
 }
 
