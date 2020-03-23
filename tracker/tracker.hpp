@@ -21,6 +21,19 @@
 #include <experimental/filesystem>
 namespace fs = std::experimental::filesystem;
 
+// magick api
+#define MAGICKCORE_HDRI_ENABLE 1
+#define MAGICKCORE_QUANTUM_DEPTH 16
+
+#include "MagickCore/studio.h"
+#include "MagickCore/exception.h"
+#include "MagickCore/exception-private.h"
+#include "MagickCore/image.h"
+#include "MagickWand/MagickWand.h"
+#include "MagickWand/magick-cli.h"
+#include <cmath>
+
+
 // for threading
 #include <future>
 #include <thread>
