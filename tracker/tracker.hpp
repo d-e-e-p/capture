@@ -18,6 +18,21 @@
 #include "opencv2/stitching/detail/warpers.hpp"
 #include "opencv2/stitching/warpers.hpp"
 
+#include <experimental/filesystem>
+namespace fs = std::experimental::filesystem;
+
+// for threading
+#include <future>
+#include <thread>
+#include <chrono>
+
+// for streams
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <regex>
+
+
 #ifdef HAVE_OPENCV_XFEATURES2D
 #include "opencv2/xfeatures2d/nonfree.hpp"
 #endif
