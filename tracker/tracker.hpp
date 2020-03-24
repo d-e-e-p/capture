@@ -18,6 +18,10 @@
 #include "opencv2/stitching/detail/warpers.hpp"
 #include "opencv2/stitching/warpers.hpp"
 
+#ifdef HAVE_OPENCV_XFEATURES2D
+#include "opencv2/xfeatures2d/nonfree.hpp"
+#endif
+
 #include <experimental/filesystem>
 namespace fs = std::experimental::filesystem;
 
@@ -45,16 +49,19 @@ namespace fs = std::experimental::filesystem;
 #include <sstream>
 #include <regex>
 
+// for rolling mean
+#include <boost/accumulators/accumulators.hpp>
+#include <boost/accumulators/statistics/stats.hpp>
+#include <boost/accumulators/statistics/rolling_mean.hpp>
 
-#ifdef HAVE_OPENCV_XFEATURES2D
-#include "opencv2/xfeatures2d/nonfree.hpp"
-#endif
 
 #define ENABLE_LOG 1
-#define LOG(msg) std::cout << msg
-#define LOGLN(msg) std::cout << msg << std::endl
+#define LOG(msg) std::cout << msg << std::endl
+#define ERR(msg) std::cerr << msg << std::endl
 
 using namespace std;
 using namespace cv;
 using namespace cv::detail;
+//using namespace boost::accumulators;
+
 
