@@ -47,6 +47,11 @@ struct IImage
     uint32_t pixelFormat;           /**< Image pixel format */
     uint32_t stride;                /**< Image stride, padding included */
     struct Timestamp timestamp;     /**< Image timestamp */
+    // added for easy image tracking...
+    int gain;
+    int expo;
+    int fps;
+    float delta_ms;
 };
 
 /**

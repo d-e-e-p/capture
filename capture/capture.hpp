@@ -15,9 +15,14 @@ using namespace std;
 #include "common_cpp/camera_configurator.hpp"
 #include "common_cpp/common.hpp"
 
+// plog
+#include <plog/Log.h>
+#include <plog/Appenders/ColorConsoleAppender.h>
+
 //exif
 #include <exiv2/exiv2.hpp>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <ios>
@@ -34,10 +39,6 @@ namespace fs=std::experimental::filesystem;
 
 #include <getopt.h>
 
-#include <boost/iostreams/stream.hpp>
-#include <boost/iostreams/tee.hpp>
-
-
 #include <iostream>
 #include <fstream>
 #include <istream>
@@ -49,5 +50,7 @@ namespace fs=std::experimental::filesystem;
 #include <thread>
 #include <chrono>
 
-#define LOG(msg) std::cout << msg << std::endl
-#define ERR(msg) std::cerr << msg << std::endl
+
+
+//#define LOG(msg) std::cout << msg << std::endl
+//#define ERR(msg) std::cerr << msg << std::endl

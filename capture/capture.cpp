@@ -11,10 +11,6 @@
 
 #include "capture.hpp"
 
-// for logging
-typedef boost::iostreams::tee_device<ostream, ofstream> TeeDevice;
-typedef boost::iostreams::stream<TeeDevice> TeeStream;
-
 // global vars -- but in a struct so that makes it ok :-)
 struct Options {
     int  minutes = 0;
@@ -52,6 +48,7 @@ struct Globals {
     // gain+exposure table
     list < cv::Point > gaex_table;
     list < cv::Point >::iterator gaex_table_ptr;
+    int tot_num_in_gaex_sweep = 0;
 
     //dng header
     char* dng_headerdata = NULL;
@@ -74,19 +71,16 @@ struct FilePaths {
     fs::path folder_raw ;
     fs::path folder_dng ;
     fs::path folder_jpg ;
-    fs::path file_log ;
-    fs::path file_raw ;
-    fs::path file_dng ;
-    fs::path file_jpg ;
 
     fs::path file_current_jpg = folder_data / "current.jpg";
     fs::path file_next_jpg    = folder_data / "next.jpg";
+
+    fs::path file_log ;
 
 } p;
 
 // stuff to shutdown...including camera
 struct shutDown {
-    TeeStream* logger;
     vector<thread> threads;
     future <void> job;
 } s;
@@ -99,10 +93,11 @@ ICamera* setupCamera() ;
 void runCaptureLoop(ICamera *camera) ;
 string constructImageInfoTag(IImage image, string basename) ;
 void readDngHeaderData() ;
-int saveFrameWithHeader(void *data, uint32_t datalength, string filename, string imageinfo) ;
+int saveDng(void *data, uint32_t datalength, string filename, string imageinfo) ;
 void generateGainExposureTable() ;
 void saveAndDisplayJpgDirect(ICamera *camera, IProcessedImage processedImage, string text, string basename) ;
 void saveDng(IImage image, string basename) ;
+string exec(string cmd);
 void saveJpgExternal(string text, string basename ) ;
 void exifPrint(const Exiv2::ExifData exifData) ;
 void processArgs(int argc, char** argv) ;
@@ -116,8 +111,8 @@ void setExposure (ICamera *camera, uint32_t value) ;
 void takeDummyPicsToMakeSettingsStick(ICamera *camera) ;
 void varyGain (ICamera *camera) ;
 void varyExposure (ICamera *camera) ;
-void varyBoth (ICamera *camera) ;
-void saveFrame(void *data, uint32_t length, string filename) ;
+int varyBoth (ICamera *camera) ;
+void saveRaw(void *data, uint32_t length, string filename) ;
 void cleanUp (ICamera *camera) ;
 
 /*
@@ -144,7 +139,7 @@ int main(int argc, char **argv) {
 
 
 void PrintHelp() {
-    cout <<
+    LOGI <<
        "--minutes <n>:       set num of minutes to capture\n"
        "--frames <n>:        set number of frames to capture\n"
        "--gain <n>:          set gain\n"
@@ -173,46 +168,41 @@ void setupDirs() {
     p.folder_base = p.folder_data / g.dateStamp;
     fs::create_directories(p.folder_base);
 
-    // see https://stackoverflow.com/questions/19641190/c-duplicate-stdout-to-file-by-redirecting-cout
     p.file_log = p.folder_base / "run.log";
     fs::remove(p.file_log);
-    ofstream logFile;
-    logFile.open(p.file_log);
 
-    ostream tmp(cout.rdbuf()); // <----
-    TeeDevice outputDevice(tmp, logFile); // <----
-    TeeStream logger(outputDevice);
-    s.logger = &logger;
+    static plog::ColorConsoleAppender<plog::TxtFormatter> consoleAppender;
+    static plog::RollingFileAppender<plog::TxtFormatter, plog::NativeEOLConverter<> > fileAppender(p.file_log.string().c_str());
 
-    //cout.rdbuf(logger.rdbuf());
-    cout << opt.header << endl;
-    cout << opt.comment << endl << flush;
+    // verbose mode? capture everything in the log
+    // oops, can't do this yet because args haven't been processed...
+    //plog::Severity maxSeverity = opt.verbose ? plog::verbose : plog::info;
+    plog::init(plog::info, &fileAppender).addAppender(&consoleAppender);
 
-    p.folder_raw  = p.folder_base  / "raw";
-    p.folder_dng  = p.folder_base  / "dng";
-    p.folder_jpg  = p.folder_base  / "jpg";
-    fs::create_directories(p.folder_raw);
-    fs::create_directories(p.folder_dng);
-    fs::create_directories(p.folder_jpg);
+    PLOGI << opt.header ;
+    PLOGI << opt.comment ;
 
-    cout << "saving results under " << p.folder_base << endl;
-    if (opt.verbose) {
-        cout << " raw under folder : " << p.folder_raw << endl;
-        cout << " dng under folder : " << p.folder_dng << endl;
-        cout << " jpg under folder : " << p.folder_jpg << endl;
-    }
+    p.folder_raw = p.folder_base / "raw"; fs::create_directories(p.folder_raw);
+    p.folder_dng = p.folder_base / "dng"; fs::create_directories(p.folder_dng);
+    p.folder_jpg = p.folder_base / "jpg"; fs::create_directories(p.folder_jpg);
+
+    PLOGI << "results under:" << p.folder_base ;
+    PLOGI << "   raw under : "  << p.folder_raw;
+    PLOGI << "   dng under : "  << p.folder_dng;
+    PLOGI << "   jpg under : "  << p.folder_jpg;
 }
 
 ICamera* setupCamera() {
 
     fs::path file_camera_settings = p.folder_base / "camera.settings";
     string command = "/usr/local/bin/v4l2-ctl --verbose --all > " + file_camera_settings.string();
-    system( (const char *) command.c_str());
+    //system( (const char *) command.c_str());
+    PLOGI << exec(command);
 
     ICameraList cameras = sv::GetAllCameras();
     if (cameras.size() == 0) {
-        cerr << "No cameras detected! Exiting..." << endl;
-        return 0;
+        LOGE << "No cameras detected! Exiting..." ;
+        exit(-1);
     }
 
     // on multi-camera system just select first camera
@@ -243,21 +233,26 @@ ICamera* setupCamera() {
         string value = getCurrentControlValue(control);
         string id    = to_string(control->GetID());
         if (opt.verbose) {
-            cout << "Control: " << name << " = " << value << " : id = " << id << endl;
+            LOGV << "Control: " << name << " = " << value << " : id = " << id ;
         } else {
-            cout << "Control: " << name << " = " << value <<  endl;
+            LOGI << "Control: " << name << " = " << value ;
         }
     }
 
 
     if (!camera->StartStream()) {
-        cerr << "Failed to start stream!" << endl;
-        return 0;
+        LOGE << "Failed to start stream!" ;
+        exit(-1);
     }
 
     return camera;
 
 }
+
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 
 void runCaptureLoop(ICamera *camera) {
     // inits for loop
@@ -269,7 +264,7 @@ void runCaptureLoop(ICamera *camera) {
         if (opt.fps == 0) {
             int estimated_fps = 100;
             frameCount = opt.minutes * 60 * estimated_fps;
-            //cout << "estimating to capture " << frameCount << " frames at " <<  estimated_fps << "fps " << endl;
+            LOGV << "estimating to capture " << frameCount << " frames at " <<  estimated_fps << "fps " ;
         } else {
             frameCount = opt.minutes * 60 * opt.fps;
         }
@@ -284,7 +279,10 @@ void runCaptureLoop(ICamera *camera) {
     int duration_between_saves_ms;
     if (opt.fps > 0) {
         duration_between_saves_ms = round(1000.0 / (float) opt.fps);
-    }  
+    }
+
+    auto image_time_last = chrono::nanoseconds{0};
+    auto image_time_this = chrono::nanoseconds{0};
 
     //vector<thread> s.threads;  // keep track of threads to close in shutdown
     //stuct
@@ -313,8 +311,9 @@ void runCaptureLoop(ICamera *camera) {
             start_loop  = chrono::system_clock::now();
         } 
 
+        int index_of_gaex_sweep;
         if (opt.vary_both) {
-            varyBoth(camera);
+            index_of_gaex_sweep = varyBoth(camera);
         } else {
             if (opt.vary_gain)
                 varyGain(camera);
@@ -326,7 +325,7 @@ void runCaptureLoop(ICamera *camera) {
         IImage image = camera->GetImage();
 
         if (image.data == nullptr) {
-            cerr << "Unable to save frame, invalid image data" << endl;
+            LOGE << "Unable to save frame, invalid image data" ;
             break;
         }
 
@@ -336,15 +335,22 @@ void runCaptureLoop(ICamera *camera) {
 
         fpsMeasurer.FrameReceived();
 
-
-
-        // is it possible that opt.gain is not the same as control?
-        if (opt.gain != camera->GetControl(SV_V4L2_GAIN)->Get()) {
-            cerr << "mismatch! opt.gain = " << opt.gain << " while control = " << camera->GetControl(SV_V4L2_GAIN)->Get() << endl;
+        image_time_this = chrono::seconds{image.timestamp.s} + chrono::microseconds{image.timestamp.us};
+        float delta_ms = 0;
+        if (image_time_last.count() != 0) {
+            chrono::duration<double>  delta_s  = image_time_this - image_time_last;
+            delta_ms = 1000.0 * delta_s.count();
+            //LOGV << " dt = " << image_time_this.count() << " - " << image_time_last.count() << " = " << delta_ms << "ms" << " delta_s = " << delta_s.count();
         }
-        if (opt.expo != camera->GetControl(SV_V4L2_EXPOSURE)->Get()) {
-            cerr << "mismatch! opt.gain = " << opt.gain << " while control = " << camera->GetControl(SV_V4L2_EXPOSURE)->Get() << endl;
-        }
+        // update image attributes
+        image.gain = opt.gain;
+        image.expo = opt.expo;
+        image.fps  = fpsMeasurer.GetFps();
+        image.delta_ms = delta_ms;
+
+        swap( image_time_last, image_time_this ) ;
+        //LOGV << " dt = " << image_time_this.count() << " - " << image_time_last.count() << " = " << dt << "ms";
+
 
         // c++ does have reasonable printf until c++20 sigh.
         // if opt/gain are being changed, used long name...
@@ -356,25 +362,29 @@ void runCaptureLoop(ICamera *camera) {
         }
         string basename = buff;
 
-        stringstream ss;
-        ss << basename;
-        ss << " fps = "  << fpsMeasurer.GetFps();
-        ss << " gain = " << opt.gain;
-        ss << " exp = "  << opt.expo;
-        string text = ss.str();    
-        if (opt.verbose) {
-            cout << "\t" << text << endl << flush;
+        if (image.delta_ms > 10) {
+           snprintf(buff, sizeof(buff), "%s %dfps %2.0fms gain=%d exp=%d",
+                basename.c_str(), image.fps, image.delta_ms, image.gain, image.expo);
+        } else {
+           snprintf(buff, sizeof(buff), "%s %dfps %2.1fms gain=%d exp=%d",
+                basename.c_str(), image.fps, image.delta_ms, image.gain, image.expo);
         }
+        string text = buff;
+        if (opt.vary_both) {
+                text += " sweep=" + to_string(index_of_gaex_sweep)  + "/" +  to_string(g.tot_num_in_gaex_sweep);
+        }
+        LOGV << "\t" << text;
 
         if (image.data == nullptr) {
-            cerr << "ERR: image.data null" << endl;
+            LOGE << "ERR: image.data null" ;
             break;
         }
+
+        // ok now to save stuff...
         if (! opt.nosave) {
             fs::path file_raw = p.folder_raw / (basename + ".raw");
-            saveFrame(image.data, image.length, file_raw.string());
+            saveRaw(image.data, image.length, file_raw.string());
         }
-
 
         saveDng(image, basename);
 
@@ -393,27 +403,20 @@ void runCaptureLoop(ICamera *camera) {
         camera->ReturnImage(image);
     }
     // cleanup
-    cout << "\nSaved " << num_frames << " frames to " << p.folder_raw << " folder with fps = " << fpsMeasurer.GetFps() << endl << flush;
-    cout << "session log :" << p.file_log << endl;
+    LOGI << "\nSaved " << num_frames << " frames to " << p.folder_raw << " folder with fps = " << fpsMeasurer.GetFps() << flush;
+    LOGI << "session log :" << p.file_log << endl;
 }
 
 // to go into exif of jpeg eventually...
 string constructImageInfoTag(IImage image, string basename) {
-     if (false) {
-         cout << " image.id          : " << image.id           << endl;
-         cout << " image.length      : " << image.length       << endl;
-         cout << " image.width       : " << image.width        << endl;
-         cout << " image.height      : " << image.height       << endl;
-         cout << " image.pixelFormat : " << image.pixelFormat  << endl;
-         cout << " image.stride      : " << image.stride       << endl;
-         cout << " image.timestamp.s : " << image.timestamp.s << "." << image.timestamp.us  << endl;
-     }
 
      stringstream ss;
      ss << "header="                    << opt.header          << ":";
      ss << "frame="                     << basename            << ":";
-     ss << "gain="                      << opt.gain            << ":";
-     ss << "expo="                      << opt.expo            << ":";
+     ss << "gain="                      << image.gain          << ":";
+     ss << "expo="                      << image.expo          << ":";
+     ss << "fps="                       << image.fps           << ":";
+     ss << "delta_ms="                  << image.delta_ms      << ":";
      ss << "image.id="                  << image.id            << ":";
      ss << "image.length="              << image.length        << ":";
      ss << "image.width="               << image.width         << ":";
@@ -429,14 +432,14 @@ string constructImageInfoTag(IImage image, string basename) {
 
 void readDngHeaderData() {
     g.dng_headerlength = fs::file_size(p.headerfile);
-    cout << " dng header : " << p.headerfile << " size = " << g.dng_headerlength << endl << flush;
+    LOGI << " dng header : " << p.headerfile << " size = " << g.dng_headerlength ;
     g.dng_headerdata = new char [g.dng_headerlength];
     ifstream fhead (p.headerfile, ios::in|ios::binary);
     fhead.read (g.dng_headerdata, g.dng_headerlength);
     fhead.close();
 }
 
-int saveFrameWithHeader(void *data, uint32_t datalength, string filename, string imageinfo) {
+int saveDng(void *data, uint32_t datalength, string filename, string imageinfo) {
 
     // read in header data once if it doesn't exist
     if (g.dng_headerdata == nullptr) {
@@ -461,22 +464,23 @@ int saveFrameWithHeader(void *data, uint32_t datalength, string filename, string
 
 void generateGainExposureTable() {
 
-
     for (int value_gain = opt.min_gain; value_gain < opt.max_gain; value_gain += opt.step_gain) {
         for (int value_expo = opt.min_expo; value_expo < opt.max_expo; value_expo += opt.step_expo) {
             g.gaex_table.push_back(cv::Point(value_gain, value_expo ));
-            //cout << "Vary table (gain,exposure) =  " << cv::Point(value_gain, value_expo) << endl;
+            LOGV << " Vary table " << g.tot_num_in_gaex_sweep++ << ": (gain,expo) = " << cv::Point(value_gain, value_expo) ;
         }
     }
 
-    cout << "Generated gain+exposure table:" << endl;
-    cout << "    gain range =     " << cv::Point(opt.min_gain, opt.max_gain) << " in steps of " << opt.step_gain << endl;
-    cout << "    exposure range = " << cv::Point(opt.min_expo, opt.max_expo) << " in steps of " << opt.step_expo << endl;
-    cout << "    total values in sweep  =  " << g.gaex_table.size() << endl;
+    LOGI << "Generated gain+exposure table ";
+    LOGI << "    gain range =     " << cv::Point(opt.min_gain, opt.max_gain) << " in steps of " << opt.step_gain ;
+    LOGI << "    exposure range = " << cv::Point(opt.min_expo, opt.max_expo) << " in steps of " << opt.step_expo ;
+    LOGI << "    total values in sweep  =  " << g.gaex_table.size() ;
+
+    // record the number somewhere...
 
     if (false) {
         for (auto it : g.gaex_table) {
-            cout << it << "\n";
+            LOGV << it << "\n";
         }
     }
 
@@ -512,7 +516,7 @@ void saveAndDisplayJpgDirect(ICamera *camera, IProcessedImage processedImage, st
     }
     cv::imencode(".jpg",mImage, jpgbuf);
     if (opt.noexif) {
-        saveFrame(&jpgbuf[0], jpgbuf.size(), filenameJpg);
+        saveRaw(&jpgbuf[0], jpgbuf.size(), filenameJpg);
     } else {
         Exiv2::Image::AutoPtr eImage = Exiv2::ImageFactory::open(&jpgbuf[0],jpgbuf.size());
         exifData["Exif.Image.ProcessingSoftware"] = "capture.cpp";
@@ -560,11 +564,30 @@ void saveDng(IImage image, string basename) {
     string imageinfo = constructImageInfoTag(image, basename);
 
     fs::path file_dng = p.folder_dng / (basename + ".dng");
-    saveFrameWithHeader(image.data, image.length, file_dng, imageinfo);
-    if (opt.verbose) {
-        cout << "dng output: " << file_dng << endl;
-        cout << "  tags = " << imageinfo << endl;
+    saveDng(image.data, image.length, file_dng, imageinfo);
+    //LOGV << "dng output: " << file_dng ;
+    //LOGV << "  tags = " << imageinfo ;
+}
+
+// https://stackoverflow.com/questions/478898/how-do-i-execute-a-command-and-get-the-output-of-the-command-within-c-using-po
+string exec(string cmd) {
+
+
+    array<char, 128> buffer;
+    string result;
+    unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+    if (!pipe) {
+        throw runtime_error("popen() failed!");
     }
+    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+        result += buffer.data();
+    }
+    // remove blank lines from result
+    // https://stackoverflow.com/questions/22395333/removing-empty-lines-from-a-string-c
+    result.erase(unique(result.begin(), result.end(),
+                  [] (char a, char b) { return a == '\n' && b == '\n'; }),
+              result.end());
+    return result;
 }
 
 
@@ -579,13 +602,12 @@ void saveJpgExternal(string text, string basename ) {
     fs::path file_dng = p.folder_dng / (basename + ".dng");
     fs::path file_jpg = p.folder_jpg / (basename + ".jpg");
     //string cmd = "rawtherapee-cli -Y -o /home/deep/build/snappy/capture/next.jpg -q -p /home/deep/build/snappy/bin/wb.pp4 -c " + folderDng + filenameDng;
-    string cmd = "rawtherapee-cli -Y -o " +  p.file_next_jpg.string() + " -q -c " +  file_dng.string();
-    cmd += "; magick " +  p.file_next_jpg.string() + " -clahe 25x25%+128+2 -pointsize " + to_string(pointsize) + " -font Inconsolata -fill yellow -gravity East -draw \'translate 20,230 rotate 90 text 0,0 \" " + text + " \" \'   " + file_jpg.string() ;
-    if (opt.verbose) {
-        cout << "running cmd=" << cmd << endl;
-    }
+    string command = "rawtherapee-cli -Y -o " +  p.file_next_jpg.string() + " -q -c " +  file_dng.string();
+    command += "; magick " +  p.file_next_jpg.string() + " -clahe 25x25%+128+2 -pointsize " + to_string(pointsize) + " -font Inconsolata -fill yellow -gravity East -draw \'translate 20,230 rotate 90 text 0,0 \" " + text + " \" \'   " + file_jpg.string() ;
+    LOGV << "running cmd=" << command ;
     //cout << "running cmd: " << cmd << endl;
-    system( (const char *) cmd.c_str());
+    //system( (const char *) cmd.c_str());
+    PLOGI << exec(command);
     fs::copy(file_jpg, p.file_current_jpg, fs::copy_options::overwrite_existing);
 
 }
@@ -661,8 +683,12 @@ void processArgs(int argc, char** argv) {
 
     // echo params out to record in run log
     // http://www.cplusplus.com/forum/beginner/211100/
-    copy( argv, argv+argc, ostream_iterator<const char*>( cout, " " ) ) ;
-    cout << endl << endl;
+    stringstream ss;
+    copy( argv, argv+argc, ostream_iterator<const char*>( ss, " " ) ) ;
+    LOGI << ss.str();
+
+    //copy( argv, argv+argc, ostream_iterator<const char*>( cout, " " ) ) ;
+    //cout << endl;
 
     while (true) {
         const auto options = getopt_long(argc, argv, short_opts, long_opts, nullptr);
@@ -674,71 +700,73 @@ void processArgs(int argc, char** argv) {
         switch (options) {
         case OptMinutes:
             opt.minutes = stoi(optarg);
-            cout << "Option: Minutes set to: " << opt.minutes << endl;
+            PLOGI << "Option: Minutes set to: " << opt.minutes ;
             break;
         case OptFrames:
             opt.frames = stoi(optarg);
-            cout << "Option: Frames set to: " << opt.frames << endl;
+            PLOGI << "Option: Frames set to: " << opt.frames ;
             break;
         case OptGain:
             opt.gain = stoi(optarg);
-            cout << "Option: Gain set to: " << opt.gain << endl;
+            PLOGI << "Option: Gain set to: " << opt.gain ;
             break;
         case OptExposure:
             opt.expo = stoi(optarg);
-            cout << "Option: Exposure set to: " << opt.expo << endl;
+            PLOGI << "Option: Exposure set to: " << opt.expo ;
             break;
         case OptFps:
             opt.fps = stoi(optarg);
-            cout << "Option: fps set to: " << opt.fps << endl;
+            PLOGI << "Option: fps set to: " << opt.fps ;
             break;
         case OptVaryGain:
             opt.vary_gain = true;
-            cout << "Option: sweep gain from min to max" << endl;
+            PLOGI << "Option: sweep gain from min to max" ;
             break;
         case OptMinGain:
             opt.min_gain = stoi(optarg);
-            cout << "Option: Min gain set to: " << opt.min_gain << endl;
+            PLOGI << "Option: Min gain set to: " << opt.min_gain ;
             break;
         case OptMaxGain:
             opt.max_gain = stoi(optarg);
-            cout << "Option: Max gain set to: " << opt.max_gain << endl;
+            PLOGI << "Option: Max gain set to: " << opt.max_gain ;
             break;
         case OptVaryExposure:
             opt.vary_expo = true;
-            cout << "Option: sweep exposure from min to max" << endl;
+            PLOGI << "Option: sweep exposure from min to max" ;
             break;
         case OptMinExposure:
             opt.min_expo = stoi(optarg);
-            cout << "Option: Min exposure set to: " << opt.min_expo << endl;
+            PLOGI << "Option: Min exposure set to: " << opt.min_expo ;
             break;
         case OptMaxExposure:
             opt.max_expo = stoi(optarg);
-            cout << "Option: Max exposure set to: " << opt.max_expo << endl;
+            PLOGI << "Option: Max exposure set to: " << opt.max_expo ;
             break;
         case OptVaryBoth:
             opt.vary_both = true;
-            cout << "Option: sweep both gain and exposure from min to max" << endl;
+            PLOGI << "Option: sweep both gain and exposure from min to max" ;
             break;
         case OptNoSave:
             opt.nosave = true;
-            cout << "Option: no saving raw or jpeg files" << endl;
+            PLOGI << "Option: no saving raw or jpeg files" ;
             break;
         case OptNoExif:
             opt.noexif = true;
-            cout << "Option: no exif metadata in jpeg files" << endl;
+            PLOGI << "Option: no exif metadata in jpeg files" ;
             break;
         case OptNoDisplay:
             opt.nodisplay = true;
-            cout << "Option: no display or jpeg files" << endl;
+            PLOGI << "Option: no display or jpeg files" ;
             break;
         case OptComment:
             opt.comment = string(optarg);
-            cout << "Option: comment: " << opt.comment << endl;
+            PLOGI << "Option: comment: " << opt.comment ;
             break;
         case OptVerbose:
             opt.verbose = true;
-            cout << "Option: verbose mode" << endl;
+            PLOGI << "Option: verbose mode" ;
+            // turn on verbose reporting
+            plog::get()->setMaxSeverity(plog::verbose);
             break;
         default:
             PrintHelp();
@@ -746,7 +774,7 @@ void processArgs(int argc, char** argv) {
         }
     }
 
-    cout << endl;
+    LOGI << "Option processing complete";
 }
 
 string getDateTimeOriginal() {
@@ -852,11 +880,11 @@ void setGain (ICamera *camera, uint32_t value) {
 
     if (opt.verbose) {
         if (value < minValue) {
-            cout << value << "  less than min value of Gain = " << minValue << endl;
+            LOGV << value << "  less than min value of Gain = " << minValue ;
         } else if (value > maxValue) {
-            cout << value << "  greater than max value of Gain = " << maxValue << endl;
+            LOGV << value << "  greater than max value of Gain = " << maxValue ;
         }
-        cout << " setting Gain = " << value << " default = " << defValue << endl;
+        LOGV << " setting Gain = " << value << " default = " << defValue ;
     }
 
     camera->GetControl(SV_V4L2_GAIN)->Set(value);
@@ -885,11 +913,11 @@ void setExposure (ICamera *camera, uint32_t value) {
 
     if (opt.verbose) {
         if (value < minValue) {
-            cout << value << "  less than min value of Exposure = " << minValue << endl;
+            LOGV << value << "  less than min value of Exposure = " << minValue ;
         } else if (value > maxValue) {
-            cout << value << "  greater than max value of Exposure = " << maxValue << endl;
+            LOGV << value << "  greater than max value of Exposure = " << maxValue ;
         }
-        cout << " setting Exposure = " << value << " default = " << defValue << endl;
+        LOGV << " setting Exposure = " << value << " default = " << defValue ;
     }
 
 
@@ -927,8 +955,8 @@ void varyExposure (ICamera *camera) {
 
 }
 
-// TODO: return index number of current iteration
-void varyBoth (ICamera *camera) {
+// return index number of current iteration
+int varyBoth (ICamera *camera) {
 
     // table empty? make.
     if (g.gaex_table.empty()) {
@@ -950,23 +978,24 @@ void varyBoth (ICamera *camera) {
         g.gaex_table_ptr++;
     }
 
+    return distance(g.gaex_table.begin(),g.gaex_table_ptr);
 }
 
 
-void saveFrame(void *data, uint32_t length, string filename) {
+void saveRaw(void *data, uint32_t length, string filename) {
 
     remove(filename.c_str());
     int fd = open (filename.c_str(), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
     if (fd == -1) {
-        cout << "Unable to save frame, cannot open file " << filename << endl;
+        LOGE << "Unable to save frame, cannot open file " << filename ;
         return;
     }
 
     int writenBytes = write(fd, data, length);
     if (writenBytes < 0) {
-        cout << "Error writing to file " << filename << endl;
+        LOGE << "Error writing to file " << filename ;
     } else if ( (uint32_t) writenBytes != length) {
-        cout << "Warning: " << writenBytes << " out of " << length << " were written to file " << filename << endl;
+        LOGW << "Warning: " << writenBytes << " out of " << length << " were written to file " << filename ;
     }
 
     close(fd);
@@ -974,16 +1003,11 @@ void saveFrame(void *data, uint32_t length, string filename) {
 
 void cleanUp (ICamera *camera) {
     // clean up...
-    if (opt.verbose) {
-        cout << " final cleanup.." << endl << flush;;
-    }
+    LOGV << " final cleanup.." << endl << flush;;
     camera->StopStream();
     s.job.wait();
     for (auto& th : s.threads) {
         th.join();
     }
-    cout << " final cleanup going to close logger.." << endl << flush;;
-    s.logger->close();
-    cout << " final cleanup done     close logger.." << endl << flush;;
 }
 
