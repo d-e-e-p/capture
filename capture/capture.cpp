@@ -272,6 +272,19 @@ void runCaptureLoop(ICamera *camera) {
     int maxIntegerWidth = to_string(frameCount).length() + 1;
     common::FpsMeasurer fpsMeasurer;
 
+    // sync up gain/expo in case it was externally changed
+    if (opt.gain != camera->GetControl(SV_V4L2_GAIN)->Get()) {
+        LOGW << "mismatch! opt.gain = " << opt.gain << " while control = " << camera->GetControl(SV_V4L2_GAIN)->Get() ;
+        LOGW << "gain set to match control" ;
+        opt.gain = camera->GetControl(SV_V4L2_GAIN)->Get();
+    }
+    if (opt.expo != camera->GetControl(SV_V4L2_EXPOSURE)->Get()) {
+        LOGW << "mismatch! opt.expo = " << opt.expo << " while control = " << camera->GetControl(SV_V4L2_EXPOSURE)->Get() ;
+        LOGW << "expo set to match control" ;
+        opt.expo = camera->GetControl(SV_V4L2_EXPOSURE)->Get();
+    }
+
+
     // time stuff
     auto now  = chrono::system_clock::now();
     auto start_prog = now;
@@ -363,15 +376,18 @@ void runCaptureLoop(ICamera *camera) {
         string basename = buff;
 
         if (image.delta_ms > 10) {
-           snprintf(buff, sizeof(buff), "%s %dfps %2.0fms gain=%d exp=%d",
+           snprintf(buff, sizeof(buff), "%s %3dfps %3.0fms gain=%d exp=%d",
                 basename.c_str(), image.fps, image.delta_ms, image.gain, image.expo);
         } else {
-           snprintf(buff, sizeof(buff), "%s %dfps %2.1fms gain=%d exp=%d",
+           snprintf(buff, sizeof(buff), "%s %3dfps %3.1fms gain=%d exp=%d",
                 basename.c_str(), image.fps, image.delta_ms, image.gain, image.expo);
         }
         string text = buff;
         if (opt.vary_both) {
-                text += " sweep=" + to_string(index_of_gaex_sweep)  + "/" +  to_string(g.tot_num_in_gaex_sweep);
+                int length = to_string(g.tot_num_in_gaex_sweep).length();
+                snprintf(buff, sizeof(buff), " sweep=%*d/%d",
+                        length,index_of_gaex_sweep,g.tot_num_in_gaex_sweep);
+                text += buff;
         }
         LOGV << "\t" << text;
 
@@ -384,24 +400,26 @@ void runCaptureLoop(ICamera *camera) {
         if (! opt.nosave) {
             fs::path file_raw = p.folder_raw / (basename + ".raw");
             saveRaw(image.data, image.length, file_raw.string());
+            saveDng(image, basename);
         }
 
-        saveDng(image, basename);
 
         if (opt.create_jpeg_for_all) {
+            saveDng(image, basename);
             saveJpgExternal( text, basename ) ;
         } else {
             // Use wait_for() with zero time to check thread status.
             chrono::nanoseconds ns(1);
             auto status = s.job.wait_for(ns);
             if (status == future_status::ready) {
+                saveDng(image, basename);
                 s.job = async(launch::async, saveJpgExternal, text, basename ) ;
             } 
          }
 
-
         camera->ReturnImage(image);
-    }
+    } // end of loop
+
     // cleanup
     LOGI << "\nSaved " << num_frames << " frames to " << p.folder_raw << " folder with fps = " << fpsMeasurer.GetFps() << flush;
     LOGI << "session log :" << p.file_log << endl;
@@ -594,16 +612,14 @@ string exec(string cmd) {
 void saveJpgExternal(string text, string basename ) {
 
     // long names => smaller font
-    int pointsize = 20;
-    if (opt.vary_both or opt.vary_gain or opt.vary_expo) {
-        pointsize = 15;
-    }
+    // determined by experiments
+    int pointsize = (float) 1000 / (float) text.length() - 2 ;
 
     fs::path file_dng = p.folder_dng / (basename + ".dng");
     fs::path file_jpg = p.folder_jpg / (basename + ".jpg");
     //string cmd = "rawtherapee-cli -Y -o /home/deep/build/snappy/capture/next.jpg -q -p /home/deep/build/snappy/bin/wb.pp4 -c " + folderDng + filenameDng;
     string command = "rawtherapee-cli -Y -o " +  p.file_next_jpg.string() + " -q -c " +  file_dng.string();
-    command += "; magick " +  p.file_next_jpg.string() + " -clahe 25x25%+128+2 -pointsize " + to_string(pointsize) + " -font Inconsolata -fill yellow -gravity East -draw \'translate 20,230 rotate 90 text 0,0 \" " + text + " \" \'   " + file_jpg.string() ;
+    command += "; magick " +  p.file_next_jpg.string() + " -clahe 25x25%+128+2 -pointsize " + to_string(pointsize) + " -font Inconsolata -fill yellow -gravity East -draw \'translate 15,232 rotate 90 text 0,0 \" " + text + " \" \'   " + file_jpg.string() ;
     LOGV << "running cmd=" << command ;
     //cout << "running cmd: " << cmd << endl;
     //system( (const char *) cmd.c_str());
