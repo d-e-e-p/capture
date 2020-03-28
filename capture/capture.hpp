@@ -50,7 +50,56 @@ namespace fs=std::experimental::filesystem;
 #include <thread>
 #include <chrono>
 
-
-
+// use plog instead
 //#define LOG(msg) std::cout << msg << std::endl
 //#define ERR(msg) std::cerr << msg << std::endl
+//
+// v4l2
+//
+//
+//
+#include <linux/videodev2.h>
+
+enum io_method {
+    IO_METHOD_READ,
+    IO_METHOD_MMAP,
+    IO_METHOD_USERPTR,
+};
+
+struct buffer {
+    void   *start;
+    size_t  length;
+};
+
+extern char            *dev_name;
+extern enum io_method   io;
+extern int              fd;
+extern struct buffer          *buffers;
+extern unsigned int     n_buffers;
+extern int              out_buf;
+extern int              force_format;
+extern int              frame_count;
+
+
+extern  void errno_exit(const char *s);
+extern  void process_image(const void *ptr, int size);
+extern  void mainloop(void);
+extern  void stop_capturing(void);
+extern  void start_capturing(void);
+extern  void uninit_device(void);
+extern  void init_read(unsigned int buffer_size);
+extern  void init_mmap(void);
+extern  void init_userp(unsigned int buffer_size);
+extern  void init_device(void);
+extern  void close_device(void);
+extern  void open_device(void);
+extern  void usage(FILE *fp, int argc, char **argv);
+
+long get_gain(void) ;
+long get_expo(void) ;
+int set_gain(long value) ;
+int set_expo(long value) ;
+struct v4l2_query_ext_ctrl query_gain(void) ;
+struct v4l2_query_ext_ctrl query_expo(void) ;
+
+
