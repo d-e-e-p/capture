@@ -66,8 +66,8 @@ struct FilePaths {
     fs::path headerfile = "/home/deep/build/snappy/bin/dng_header.bin";
 
     //misc file locations
-    fs::path folder_data = "/home/deep/build/snappy/data/images/";
-    fs::path folder_base ;
+    fs::path folder_data ; // relative to exe ../bin/capture => ../data/images
+    fs::path folder_base ; // datestamp dir under folder_data
     fs::path folder_raw ;
     fs::path folder_dng ;
     fs::path folder_jpg ;
@@ -171,9 +171,7 @@ void syncGainExpo(void);
  */
 
 int main(int argc, char **argv) {
-    ICamera *camera;
     dev_name = (char *) "/dev/video0";
-
 
     setupDirs();
     processArgs(argc, argv);
@@ -219,15 +217,38 @@ void PrintHelp() {
     exit(1);
 }
 
+// count = BUFSIZ is also a problem...
+fs::path getExePath() {
+  char result[ BUFSIZ ];
+  int count = readlink( "/proc/self/exe", result, BUFSIZ );
+  if (count == -1 || count == sizeof(result)) {
+    perror("readlink error on /proc/self/exe: ");
+    exit(-1);
+  }
+  result[count] = '\0';
+  return string( result );
+}
 
 void setupDirs() {
+
+    // first figure out path to exe and base use that to determine where to 
+    // put the images
+    fs::path file_exe = getExePath();
+    // snappy/bin/capture -> snappy/data
+    fp.folder_data = file_exe.parent_path().parent_path().string() + "/data";
+    if (! fs::exists(fp.folder_data)) {
+        cout << "creating data dir : " << fp.folder_data << "\n";
+    }
+
     // filename stuff...
     g.dateStamp  = getDateStamp();
     fp.folder_base = fp.folder_data / g.dateStamp;
     fs::create_directories(fp.folder_base);
 
     fp.file_log = fp.folder_base / "run.log";
-    fs::remove(fp.file_log);
+    if (fs::exists(fp.file_log)) {
+        fs::remove(fp.file_log);
+    }
 
     static plog::ColorConsoleAppender<plog::TxtFormatter> consoleAppender;
     static plog::RollingFileAppender<plog::TxtFormatter, plog::NativeEOLConverter<> > fileAppender(fp.file_log.string().c_str());

@@ -15,6 +15,9 @@ using namespace std;
 #include "common_cpp/camera_configurator.hpp"
 #include "common_cpp/common.hpp"
 
+//opencv
+#include <opencv2/highgui.hpp>
+
 // plog
 #include <plog/Log.h>
 #include <plog/Appenders/ColorConsoleAppender.h>
@@ -22,6 +25,7 @@ using namespace std;
 //exif
 #include <exiv2/exiv2.hpp>
 
+//std
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -35,7 +39,7 @@ namespace fs=std::experimental::filesystem;
 #include <memory>
 #include <mutex>
 #include <string>
-#include <opencv2/highgui.hpp>
+#include<iterator>
 
 #include <getopt.h>
 
