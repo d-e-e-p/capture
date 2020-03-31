@@ -106,7 +106,7 @@ struct shutDown {
 } sd;
 
 struct Imagedata {
-    void* data;                     /**< Raw pointer to buffer */
+    char* data;                     /**< Raw pointer to buffer */
     string basename;
     long syst_timestamp;
     long stdy_timestamp;
@@ -152,7 +152,7 @@ void varyExposure (void) ;
 int varyBoth (void) ;
 void saveRaw(Imagedata image) ;
 int saveDng(Imagedata image) ;
-int saveDngFile(void *data, uint32_t datalength, string filename, string imageinfo) ;
+int saveDngFile(char *data, int datalength, string filename, string imageinfo) ;
 void cleanUp (void) ;
 void setupLoop(void);
 void endLoop(void);
@@ -573,7 +573,7 @@ int saveDng(Imagedata image) {
     //LOGV << "  tags = " << imageinfo ;
 }
 
-int saveDngFile(void *data, uint32_t datalength, string filename, string imageinfo) {
+int saveDngFile(char *data, int datalength, string filename, string imageinfo) {
 
     // read in header data once if it doesn't exist
     if (g.dng_headerdata == nullptr) {
@@ -588,10 +588,32 @@ int saveDngFile(void *data, uint32_t datalength, string filename, string imagein
         mod_headerdata.at(i+g.dng_attribute_start) = imageinfo[i];
     }
 
+    //correct the size of data
+
+    int old_width  = 768*2;
+    int height = 544;
+
+    int new_width = 728*2;
+    int newdatalength = new_width * height;
+
+    vector<char> indata(data, data + datalength);
+    vector<char> outdata(newdatalength, 0);
+
+    for (int x = 0; x < old_width ; x++) {
+        for (int y=0;y < height ; y++) {
+            if (x < new_width) {
+                int old_pixel = x + y * old_width;
+                int new_pixel = x + y * new_width;
+                outdata.at(new_pixel) = indata.at(old_pixel);
+            }
+        }
+    }
+
+
     fs::remove(filename);
     ofstream outfile (filename,ofstream::binary);
     outfile.write (reinterpret_cast<const char*>(&mod_headerdata[0]), g.dng_headerlength);
-    outfile.write (reinterpret_cast<const char*>(data), datalength);
+    outfile.write (reinterpret_cast<const char*>(&outdata[0]), newdatalength);
     outfile.close();
 
 }
