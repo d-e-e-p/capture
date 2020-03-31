@@ -86,7 +86,7 @@ struct Loop {
     int frameSaved = 0;
     int maxIntegerWidth;
     common::FpsMeasurer fpsMeasurer;
-    int index_of_gaex_sweep;
+    int index_of_gaex_sweep = 0;
     int duration_between_saves_ms = 0;
 
     chrono::system_clock::time_point syst_time_prog = chrono::system_clock::now();
@@ -431,7 +431,7 @@ int loopCallback( void *ptr, int size ) {
         }
         string basename = buff;
 
-        if (image.delta_ms > 10) {
+        if (delta_ms > 10) {
            snprintf(buff, sizeof(buff), "%s %3dfps %3.0fms gain=%d exp=%d",
                 basename.c_str(), lp.fpsMeasurer.GetFps(), delta_ms, opt.gain, opt.expo);
         } else {
@@ -530,8 +530,11 @@ string constructImageInfoTag(Imagedata image) {
      ss << "frame="              << image.basename        << ":";
      ss << "syst_timestamp="     << image.syst_timestamp  << ":";
      ss << "stdy_timestamp="     << image.stdy_timestamp  << ":";
+     ss << "datestamp="          << g.dateStamp           << ":";
      ss << "gain="               << image.gain            << ":";
      ss << "expo="               << image.expo            << ":";
+     ss << "sweep_index="        << lp.index_of_gaex_sweep  << ":";
+     ss << "sweep_total="        << g.tot_num_in_gaex_sweep << ":";
      ss << "fps="                << image.fps             << ":";
      ss << "delta_ms="           << image.delta_ms        << ":";
      ss << "image.length="       << image.length          << ":";

@@ -33,14 +33,14 @@ struct Options {
     //int   end_image   = 5761;
 
     //// for short run video
-    //float starting_position = 4.932;
-    //int   start_image = 1400;
-    //int   end_image   = 2700;
+    float starting_position = 0;
+    int   start_image = 0;
+    int   end_image   = 10000000;
 
     // for long run video
-    float starting_position = -0.327;      // in m
-    int   start_image = 4440;
-    int   end_image   = 9300;
+    //float starting_position = -0.327;      // in m
+    //int   start_image = 4440;
+    //int   end_image   = 9300;
 
 
 } opt;
@@ -65,10 +65,11 @@ struct Caption {
 
 // speed smoothing accumulator
 // can't use namespace because of clashes...
-boost::accumulators::accumulator_set<float, boost::accumulators::stats<boost::accumulators::tag::rolling_mean > > acc (boost::accumulators::tag::rolling_window::window_size=5);
+int window_size = 25;
+boost::accumulators::accumulator_set<float, boost::accumulators::stats<boost::accumulators::tag::rolling_mean > > 
+    acc (boost::accumulators::tag::rolling_window::window_size=window_size);
 
 
-#include "fps.hpp"
 
 /*
  * experiment on 202003201636 data
@@ -147,7 +148,42 @@ std::vector<fs::path> get_filenames( fs::path path ) {
     return filenames;
 }
 
-timespec get_create_time( fs::path jpgname ) {
+timespec get_create_time_from_attribute( fs::path jpgname ) {
+
+    // find rawname corresponding to this jpg file
+    if (jpgname.extension() != ".jpg") {
+        ERR("assume jpg source files " << jpgname);
+    }
+
+    // get data in
+    //int size_start =  391; // should be enough to get header
+    int size_start = 1000; // should be enough to get header
+    int size_end   = 6000; // should be enough to get header
+    int size = size_end - size_start;
+    ifstream fin (jpgname, ios::in|ios::binary); 
+    std::string buffer(size, ' ');
+    fin.seekg(size_start, fin.beg);
+    fin.read(&buffer[0], size); 
+    fin.close();
+    //LOG("loaded " << jpgname << " header size : " << size );
+
+   // :stdy_timestamp=2017807505024:
+    regex pattern (":stdy_timestamp=([^:]{4})([^:]{9}):");
+    smatch sm;
+    regex_search (buffer,sm,pattern);
+    if (sm.size() < 2) {
+        ERR("patt not matched in: " << buffer << " sm.size() = " << sm.size());
+        exit(-1);
+    }
+    
+    timespec ts;
+    ts.tv_sec  = stoi(sm[1]);
+    ts.tv_nsec = stoi(sm[2]);
+    //LOG("ts.tv_sec = " << ts.tv_sec << " ts.tv_nsec= " << ts.tv_nsec );
+    return ts;
+}
+
+timespec get_create_time_from_stat( fs::path jpgname ) {
 
     // find rawname corresponding to this jpg file
     if (jpgname.extension() != ".jpg") {
@@ -179,6 +215,7 @@ timespec get_create_time( fs::path jpgname ) {
 
 }
 
+
 // TODO: average over last few values to make it less noisy
 void estimate_speed(timespec ts_after, timespec ts_before) {
 
@@ -188,16 +225,21 @@ void estimate_speed(timespec ts_after, timespec ts_before) {
 
     pose.t      = ts_after.tv_sec;
     pose.dt     = chrono::duration<double>(delta).count();
-    //LOG("before = " << before.count() << " after = " << after.count() << " dt = " << pose.dt);
+    //LOG("dt = " << pose.dt << " = " << after.count() << " - " << before.count());
 
     float conversion_mps_to_kph = 3.6;
     pose.vx = conversion_mps_to_kph *  pose.dx / pose.dt;
     pose.vy = conversion_mps_to_kph *  pose.dy / pose.dt;
 
+    acc(pose.vy);
+    pose.vya = boost::accumulators::rolling_mean(acc);
+
 }
 
-// HACK: xavier doesn't store high precision file times --sigh
+// HACK: exFat doesn't store high precision file times --sigh
 void estimate_speed_hack(string basename) {
+
+    map<string, float> dt = {};
 
     if (dt.find(basename) == dt.end()) {
         ERR("can't find basename in dt " << basename);
@@ -222,11 +264,11 @@ Caption compute_delta_displacement(fs::path lastfile, fs::path nextfile) {
     if (image[0].empty()) {
         image[0] = imread(lastfile.string());
         computeImageFeatures(finder, image[0], features[0]);
-        create_time[0] = get_create_time(lastfile);
+        create_time[0] = get_create_time_from_attribute(lastfile);
     }
     image[1] = imread(nextfile.string());
     computeImageFeatures(finder, image[1], features[1]);
-    create_time[1] = get_create_time(nextfile);
+    create_time[1] = get_create_time_from_attribute(nextfile);
 
     string basename = lastfile.stem().string();
     if (features[1].keypoints.size() < 100) {
@@ -277,12 +319,17 @@ Caption compute_delta_displacement(fs::path lastfile, fs::path nextfile) {
     pose.moving = (fabs(y) > epsilon)  ? true : false ;
 
 
+    // two ways to determine if bot is stopped: delta position and speed
+    // but speed uses averaging to maybe better to use position to detect halted state
+    epsilon  = 0.0001  ; // 0.0005m = 0.5mm
+    bool large_movement = (fabs(y) > epsilon)  ? true : false ;
+
     // estimate speed
-    //estimate_speed(create_time[1] , create_time[0]);
-    estimate_speed_hack(basename);
+    estimate_speed(create_time[1] , create_time[0]);
+    //estimate_speed_hack(basename);
 
     epsilon  = 0.01  ; // 
-    bool show_speed = (fabs(pose.vya) > epsilon)  ? true : false ;
+    bool fast_speed = (fabs(pose.vya) > epsilon)  ? true : false ;
     
 
     //features[0] = features[1].clone();
@@ -293,22 +340,23 @@ Caption compute_delta_displacement(fs::path lastfile, fs::path nextfile) {
     // come on c++ there has to be a better way to use sprintf (and not setfill/setw)
     string basename_cstr = basename.c_str();
     char buf[BUFSIZ];
-    if (show_speed) {
-        sprintf (buf, "%s    (%07.3f,%07.3f)m      %02.1f km/h", &basename_cstr[0], pose.x, pose.y, pose.vya);
+    if (large_movement) {
+        sprintf (buf, "%s    (% 07.3f,% 07.3f)m      % 02.1f km/h", &basename_cstr[0], pose.x, pose.y, pose.vya);
     } else {
-        sprintf (buf, "%s    (%07.3f,%07.3f)m        STOPPED  ", &basename_cstr[0], pose.x, pose.y);
+        sprintf (buf, "%s    (% 07.3f,% 07.3f)m        STOPPED  ", &basename_cstr[0], pose.x, pose.y);
     }
     //sprintf (buf, "     %s (%07.3f,%07.3f)m %ld", &basename_cstr[0], pose.x, pose.y, pose.t);
     string str_north(buf);
-    LOG("\t" + str_north);
 
     float conversion_m_to_mm = 1000;
     float conversion_s_to_ms = 1000;
     int intdy = (int) round(pose.dy * conversion_m_to_mm);
     int intdt = (int) round(pose.dt * conversion_s_to_ms);
 
-    sprintf (buf, "CF = %d dy/dt = %d mm / %d ms", opt.conversion_factor, intdy, intdt);
+    sprintf (buf, "CF = %d dy/dt = % 2d mm / %2d ms", opt.conversion_factor, intdy, intdt);
     string str_east(buf);
+
+    LOG("\t" << str_north << " " << str_east);
 
     Caption cap;
     cap.str_north = str_north;
@@ -391,9 +439,9 @@ void save_image_position(fs::path jpgname, Caption cap) {
 
     fs::path trkname = jpgname;
 
-    // if source directory is called "jpg", then replace with "jpg_tracking"
+    // if source directory is called "jpg", then replace with "trk"
     if (trkname.parent_path().stem() == "jpg") {
-        string newpath = trkname.parent_path().parent_path().string() + "/jpg_tracking/";
+        string newpath = trkname.parent_path().parent_path().string() + "/trk/";
         fs::create_directories(newpath);
         trkname = newpath + trkname.stem().string() + ".jpg";
     }
