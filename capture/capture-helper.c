@@ -658,6 +658,33 @@ int original_main(int argc, char **argv)
 #include <linux/videodev2.h>
 #include "libv4l-plugin.h"
 
+// obtained by query by v4l2-ctl
+struct FramosId {
+    long                      group_hold = 0x009a2003 ;
+    long                     sensor_mode = 0x009a2008 ;
+    long                            gain = 0x009a2009 ;
+    long                        exposure = 0x009a200a ;
+    long                      frame_rate = 0x009a200b ;
+    long            sensor_configuration = 0x009a2032 ;
+    long          sensor_mode_i2c_packet = 0x009a2033 ;
+    long       sensor_control_i2c_packet = 0x009a2034 ;
+    long                     bypass_mode = 0x009a2064 ;
+    long                 override_enable = 0x009a2065 ;
+    long                    height_align = 0x009a2066 ;
+    long                      size_align = 0x009a2067 ;
+    long                write_isp_format = 0x009a2068 ;
+    long        sensor_signal_properties = 0x009a2069 ;
+    long         sensor_image_properties = 0x009a206a ;
+    long       sensor_control_properties = 0x009a206b ;
+    long               sensor_dv_timings = 0x009a206c ;
+    long                low_latency_mode = 0x009a206d ;
+    long                    test_pattern = 0x009a206f ;
+    long                  streaming_mode = 0x009a2070 ;
+    long                  operation_mode = 0x009a2071 ;
+    long                     black_level = 0x009a2074 ;
+    long             global_shutter_mode = 0x009a207b ;
+    long                    sensor_modes = 0x009a2082 ;
+} id;
 
 struct v4l2_query_ext_ctrl v4l2_q_ctrl(long id) {
 
@@ -673,13 +700,11 @@ struct v4l2_query_ext_ctrl v4l2_q_ctrl(long id) {
 }
 
 struct v4l2_query_ext_ctrl query_gain(void) {
-    long id = 0x009a2009;
-    return v4l2_q_ctrl(id);
+    return v4l2_q_ctrl(id.gain);
 }
 
 struct v4l2_query_ext_ctrl query_expo(void) {
-    long id = 0x009a200a;
-    return v4l2_q_ctrl(id);
+    return v4l2_q_ctrl(id.exposure);
 }
 
 
@@ -701,14 +726,23 @@ long v4l2_g_ctrl(long id) {
 }
 
 long get_gain(void) {
-    long id = 0x009a2009;
-    return v4l2_g_ctrl(id);
+    return v4l2_g_ctrl(id.gain);
 }
 
 long get_expo(void) {
-    long id = 0x009a200a;
-    return v4l2_g_ctrl(id);
+    return v4l2_g_ctrl(id.exposure);
 }
+
+long get_frame_rate(void) {
+    return v4l2_g_ctrl(id.frame_rate);
+}
+
+float get_fps(void) {
+    long frame_rate = get_frame_rate();
+    float fps = (float) frame_rate / (float) 1000000;
+    return fps;
+}
+
 
 
 int v4l2_s_ctrl( long id, long value) {
@@ -729,13 +763,20 @@ int v4l2_s_ctrl( long id, long value) {
 }
 
 int set_gain(long value) {
-    long id = 0x009a2009;
-    return v4l2_s_ctrl(id, value);
+    return v4l2_s_ctrl(id.gain, value);
 }
 
 int set_expo(long value) {
-    long id = 0x009a200a;
-    return v4l2_s_ctrl(id, value);
+    return v4l2_s_ctrl(id.exposure, value);
+}
+
+int set_frame_rate(long value) {
+    return v4l2_s_ctrl(id.frame_rate, value);
+}
+
+int set_fps(float fps) {
+    long frame_rate = 1000000 * fps;
+    return v4l2_s_ctrl(id.frame_rate, frame_rate);
 }
 
 

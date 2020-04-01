@@ -101,8 +101,10 @@ extern  void usage(FILE *fp, int argc, char **argv);
 
 long get_gain(void) ;
 long get_expo(void) ;
+float get_fps(void) ;
 int set_gain(long value) ;
 int set_expo(long value) ;
+int set_fps(float value) ;
 struct v4l2_query_ext_ctrl query_gain(void) ;
 struct v4l2_query_ext_ctrl query_expo(void) ;
 

@@ -15,8 +15,8 @@
 struct Options {
     int  minutes = 0;
     int  frames = 1000;
-    int  gain = 10;
-    int  expo = 500; // max = 8256
+    int  gain = 50;
+    int  expo = 750; // max = 8256
     int  fps = 0;
 
     // -1 value for min/max sweep => use sensor min/max
@@ -235,10 +235,12 @@ void setupDirs() {
     // put the images
     fs::path file_exe = getExePath();
     // snappy/bin/capture -> snappy/data
-    fp.folder_data = file_exe.parent_path().parent_path().string() + "/data";
+    fp.folder_data = file_exe.parent_path().parent_path().string() + "/data/images";
     if (! fs::exists(fp.folder_data)) {
         cout << "creating data dir : " << fp.folder_data << "\n";
     }
+    fp.file_current_jpg = fp.folder_data / "current.jpg";
+    fp.file_next_jpg    = fp.folder_data / "next.jpg";
 
     // filename stuff...
     g.dateStamp  = getDateStamp();
@@ -272,6 +274,11 @@ void setupDirs() {
 }
 
 void setupCamera() {
+
+    // set default gain and exposure
+    setGain(opt.gain);
+    setExposure(opt.expo);
+    set_fps(200);
 
     fs::path file_camera_settings = fp.folder_base / "camera.settings";
     string command = "/usr/local/bin/v4l2-ctl --verbose --all > " + file_camera_settings.string();
@@ -573,7 +580,7 @@ int saveDng(Imagedata image) {
     //LOGV << "  tags = " << imageinfo ;
 }
 
-int saveDngFile(char *data, int datalength, string filename, string imageinfo) {
+int saveDngFile(char *data, int old_length, string filename, string imageinfo) {
 
     // read in header data once if it doesn't exist
     if (g.dng_headerdata == nullptr) {
@@ -591,13 +598,14 @@ int saveDngFile(char *data, int datalength, string filename, string imageinfo) {
     //correct the size of data
 
     int old_width  = 768*2;
-    int height = 544;
+    int height = old_length / old_width; // expect 544
+    //TODO assert should be 544
 
-    int new_width = 728*2;
-    int newdatalength = new_width * height;
+    int new_width = 728*2; // 40 pixel stride
+    int new_length = new_width * height;
 
-    vector<char> indata(data, data + datalength);
-    vector<char> outdata(newdatalength, 0);
+    vector<char> indata(data, data + old_length);
+    vector<char> outdata(new_length, 0);
 
     for (int x = 0; x < old_width ; x++) {
         for (int y=0;y < height ; y++) {
@@ -613,7 +621,7 @@ int saveDngFile(char *data, int datalength, string filename, string imageinfo) {
     fs::remove(filename);
     ofstream outfile (filename,ofstream::binary);
     outfile.write (reinterpret_cast<const char*>(&mod_headerdata[0]), g.dng_headerlength);
-    outfile.write (reinterpret_cast<const char*>(&outdata[0]), newdatalength);
+    outfile.write (reinterpret_cast<const char*>(&outdata[0]), new_length);
     outfile.close();
 
 }
