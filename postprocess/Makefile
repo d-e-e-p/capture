@@ -20,13 +20,13 @@ PROFILE=-g -pg
 all: ../bin/postprocess
 	echo done
 
-../bin/postprocess: postprocess.cpp 
-	$(CC) -o $@ $< $(CFLAGS) $(OPENCV_FLAGS) $(EXIFOBJ) $(MAGICK_FLAGS) 
+../bin/postprocess: postprocess.cpp postprocess.hpp Imagedata.hpp
+	$(CC) -o $@ $< $(CFLAGS) $(OPENCV_FLAGS) $(EXIFOBJ) $(MAGICK_FLAGS) $(PROFILE)
 
 watch:
 	while true; do \
 		make all; \
-		inotifywait -e close_write,move_self postprocess.cpp postprocess.hpp; \
+		inotifywait -e close_write,move_self postprocess.cpp postprocess.hpp Imagedata.hpp; \
 	done
 
 
