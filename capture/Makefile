@@ -7,7 +7,7 @@
 CC=g++
 WARNING_FLAGS=-Wall -Wextra -pedantic
 OPENCV_FLAGS=-I../opencv/include -L../opencv/lib -lopencv_core -lopencv_highgui -lopencv_imgproc -lopencv_imgcodecs
-CFLAGS=-I../libsv/include -I../libsv/examples  -L../libsv/lib -std=c++11 -pthread -Wl,-rpath=/usr/local/lib -L/usr/local/lib -lexiv2 -lstdc++fs -fpermissive
+CFLAGS=-I../libsv/include -I../libsv/examples  -L../libsv/lib -std=c++11 -pthread -Wl,-rpath=/usr/local/lib -L/usr/local/lib -lexiv2 -lstdc++fs -fpermissive -lv4l2
 CSOURCES= ../libsv/examples/common_cpp/image_processor.cpp
 PROFILE=-g -pg
 
@@ -26,5 +26,11 @@ capture-helper.o: capture-helper.c
 	$(CC) -g -c -o $@ $< $(CFLAGS) 
 
 ../bin/capture: capture.o capture-helper.o 
-	$(CC) -o $@ $^ $(CFLAGS) -lv4l2
+	$(CC) -o $@ $^ $(CFLAGS) $(OPENCV_FLAGS) 
+
+watch:
+	while true; do \
+		make all; \
+		inotifywait -e close_write capture.cpp capture.hpp capture-helper.c; \
+	done
 

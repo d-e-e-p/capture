@@ -17,6 +17,7 @@ using namespace std;
 
 //opencv
 #include <opencv2/highgui.hpp>
+using namespace cv;
 
 // plog
 #include <plog/Log.h>

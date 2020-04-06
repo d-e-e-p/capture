@@ -32,10 +32,12 @@ struct Options {
 
     bool vary_both = false;
 
-    bool create_jpeg_for_all = false;
+    bool alljpg = false;
     bool nosave = false;
-    bool nodisplay = false;
+    bool nojpg = false;
     bool noexif = false;
+    bool display = false;
+    bool interactive = false;
     bool verbose = false;
 
 
@@ -57,6 +59,11 @@ struct Globals {
 
     //
     string dateStamp;
+    string mainWindowName;
+
+    int imagewidth  = 768;
+    int imageheight = 544;
+    bool toggle_f = false;
 
 } g;
 
@@ -72,6 +79,7 @@ struct FilePaths {
     fs::path folder_dng ;
     fs::path folder_jpg ;
 
+    fs::path file_current_dng = folder_data / "current.dng";
     fs::path file_current_jpg = folder_data / "current.jpg";
     fs::path file_next_jpg    = folder_data / "next.jpg";
 
@@ -110,6 +118,7 @@ struct Imagedata {
     string basename;
     long syst_timestamp;
     long stdy_timestamp;
+    string datestamp;
     int gain;
     int expo;
     int fps;
@@ -136,7 +145,7 @@ void readDngHeaderData() ;
 void generateGainExposureTable() ;
 void saveAndDisplayJpgDirect(ICamera *camera, IProcessedImage processedImage, string text, string basename) ;
 string exec(string cmd);
-void saveJpgExternal(string text, string basename ) ;
+void saveJpg(Imagedata image);
 void exifPrint(const Exiv2::ExifData exifData) ;
 void processArgs(int argc, char** argv) ;
 string getDateTimeOriginal() ;
@@ -156,7 +165,7 @@ int saveDngFile(char *data, int datalength, string filename, string imageinfo) ;
 void cleanUp (void) ;
 void setupLoop(void);
 void endLoop(void);
-int loopCallback(void *ptr, int size);
+int endLoopCalback(void *ptr, int size);
 void syncGainExpo(void);
 
 
@@ -209,9 +218,12 @@ void PrintHelp() {
        "--max_expo:          max gain for sweep\n"
        "--vary_both:         sweep both gain and exposure from min to max\n"
        "--nosave:            no saving any images--just display\n"
-       "--nodisplay:         no jpeg or display--just raw image dump\n"
+       "--nojpg:             no jpeg or display--just raw image dump\n"
+       "--alljpg:            capture jpg for every image\n"
        "--noexif:            no exif metadata in jpeg\n"
        "--comment:           specify a comment to remember the run\n"
+       "--display:           display window\n"
+       "--interactive        display window and only save on keypress\n"
        "--verbose:           verbose\n"
        "--help:              show help\n";
     exit(1);
@@ -239,6 +251,7 @@ void setupDirs() {
     if (! fs::exists(fp.folder_data)) {
         cout << "creating data dir : " << fp.folder_data << "\n";
     }
+    fp.file_current_dng = fp.folder_data / "current.dng";
     fp.file_current_jpg = fp.folder_data / "current.jpg";
     fp.file_next_jpg    = fp.folder_data / "next.jpg";
 
@@ -251,6 +264,7 @@ void setupDirs() {
     if (fs::exists(fp.file_log)) {
         fs::remove(fp.file_log);
     }
+    g.mainWindowName = fp.folder_base.string();
 
     static plog::ColorConsoleAppender<plog::TxtFormatter> consoleAppender;
     static plog::RollingFileAppender<plog::TxtFormatter, plog::NativeEOLConverter<> > fileAppender(fp.file_log.string().c_str());
@@ -260,17 +274,19 @@ void setupDirs() {
     //plog::Severity maxSeverity = opt.verbose ? plog::verbose : plog::info;
     plog::init(plog::info, &fileAppender).addAppender(&consoleAppender);
 
-    PLOGI << opt.header ;
-    PLOGI << opt.comment ;
+    LOGI << opt.header ;
+    LOGI << opt.comment ;
 
     fp.folder_raw = fp.folder_base / "raw"; fs::create_directories(fp.folder_raw);
     fp.folder_dng = fp.folder_base / "dng"; fs::create_directories(fp.folder_dng);
     fp.folder_jpg = fp.folder_base / "jpg"; fs::create_directories(fp.folder_jpg);
 
-    PLOGI << "results under:" << fp.folder_base ;
-    PLOGI << "   raw under : "  << fp.folder_raw;
-    PLOGI << "   dng under : "  << fp.folder_dng;
-    PLOGI << "   jpg under : "  << fp.folder_jpg;
+    LOGI << "results under:" << fp.folder_base ;
+    LOGI << "   raw under : "  << fp.folder_raw;
+    LOGI << "   dng under : "  << fp.folder_dng;
+    LOGI << "   jpg under : "  << fp.folder_jpg;
+
+    readDngHeaderData();
 }
 
 void setupCamera() {
@@ -283,11 +299,18 @@ void setupCamera() {
     fs::path file_camera_settings = fp.folder_base / "camera.settings";
     string command = "/usr/local/bin/v4l2-ctl --verbose --all > " + file_camera_settings.string();
     //system( (const char *) command.c_str());
-    PLOGI << exec(command);
+    LOGI << exec(command);
 
     // set default gain and exposure
     setGain(opt.gain);
     setExposure(opt.expo);
+
+    if (opt.display) {
+        namedWindow(g.mainWindowName, CV_WINDOW_NORMAL);
+        resizeWindow(g.mainWindowName, g.imagewidth, g.imageheight);
+    }
+
+
     //TODO
     //camera->GetControl(SV_V4L2_BLACK_LEVEL)->Set(0);
     //camera->GetControl(SV_V4L2_FRAMESIZE)->Set(0);
@@ -327,6 +350,94 @@ void setupCamera() {
 
 }
 
+// src : https://gist.github.com/royshil/1449e22993e98414e9eb#file-simplestcolorbalance-cpp
+//
+/// perform the Simplest Color Balancing algorithm
+void SimplestCB(Mat& in, Mat& out, float percent) {
+    assert(in.channels() == 3);
+    assert(percent > 0 && percent < 100);
+
+    float half_percent = percent / 200.0f;
+
+    vector<Mat> tmpsplit; split(in,tmpsplit);
+    for(int i=0;i<3;i++) {
+        //find the low and high precentile values (based on the input percentile)
+        Mat flat; tmpsplit[i].reshape(1,1).copyTo(flat);
+        cv::sort(flat,flat,CV_SORT_EVERY_ROW + CV_SORT_ASCENDING);
+        int lowval = flat.at<uchar>(cvFloor(((float)flat.cols) * half_percent));
+        int highval = flat.at<uchar>(cvCeil(((float)flat.cols) * (1.0 - half_percent)));
+        //cout << lowval << " " << highval << endl;
+
+        //saturate below the low percentile and above the high percentile
+        tmpsplit[i].setTo(lowval,tmpsplit[i] < lowval);
+        tmpsplit[i].setTo(highval,tmpsplit[i] > highval);
+
+        //scale the channel
+        normalize(tmpsplit[i],tmpsplit[i],0,255,NORM_MINMAX);
+    }
+    merge(tmpsplit,out);
+}
+
+
+void performHotkeyActions(Imagedata image, int key) {
+
+    LOGI << "key = " << key;
+    switch (key) {
+        case 'f' : 
+            g.toggle_f = ! g.toggle_f;
+            LOGI << "resize window " << g.toggle_f;
+            if (g.toggle_f) {
+                resizeWindow(g.mainWindowName, 2 * g.imagewidth, 2 * g.imageheight);
+            } else {
+                resizeWindow(g.mainWindowName, 1 * g.imagewidth, 1 * g.imageheight);
+            }
+            break;
+        case 's' : 
+            LOGI << "saving";
+            saveRaw(image) ;
+            saveDng(image) ;
+            saveJpg(image) ;
+            break;
+        case 'q' : 
+            LOGI << "quitting.";
+            stop_capturing();
+            uninit_device();
+            close_device();
+            endLoop();
+            cleanUp();
+            exit(0);
+            break;
+        default :
+            LOGI << "unknown key " << key;
+    }
+
+}
+
+void showImage(Imagedata image) {
+    int size = image.height * image.width * 2;
+    Mat image_16bit(image.height, image.width, CV_16UC1);
+    memcpy(image_16bit.data, image.data, size);
+    const int CONVERSION_SCALE = 1.0;
+    Mat image_bayer1(image.height, image.width, CV_16UC3);
+    demosaicing(image_16bit, image_bayer1, COLOR_BayerRG2RGB);
+
+    Mat image_colorcorr(image.height, image.width, CV_16UC3);
+    //cv::xphoto::WhiteBalancer::balanceWhite(image_bayer1,image_colorcorr);
+    //SimplestCB(image_bayer1,image_colorcorr,50);
+
+    double min, max;
+    //minMaxLoc(image_colorcorr, &min, &max);
+    //LOGV << "image_colorcorr (black,white) = " << Point(min,max);
+    imshow(g.mainWindowName,image_bayer1);
+    displayOverlay(g.mainWindowName, image.text, 0);
+    displayStatusBar(g.mainWindowName, image.text, 0);
+
+    int key = cv::waitKey(1);
+    if (key >= 0) {
+        performHotkeyActions(image, key);
+    }
+}
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -334,10 +445,10 @@ void setupCamera() {
 void process_image(void *ptr, int size) {
     //if (out_buf)
     //   fwrite(p, size, 1, stdout);
-    loopCallback(ptr,size);
-    fflush(stderr);
-    fprintf(stderr, ".");
-    fflush(stdout);
+    endLoopCalback(ptr,size);
+    //fflush(stderr);
+    //fprintf(stderr, ".");
+    //fflush(stdout);
 }
 
 
@@ -394,13 +505,13 @@ void startLoopCallback( void ) {
     return;
 }
 
-int loopCallback( void *ptr, int size ) {
+int endLoopCalback( void *ptr, int size ) {
     if (lp.num_of_dummy_pics > 0) {
         // skip advancing on this round
         return(0);
     }
 
-        // actually get the image
+        // actually store the image
         Imagedata image;
         image.length = size;
         // TODO: do we really need memcpy?
@@ -439,11 +550,11 @@ int loopCallback( void *ptr, int size ) {
         string basename = buff;
 
         if (delta_ms > 10) {
-           snprintf(buff, sizeof(buff), "%s %3dfps %3.0fms gain=%d exp=%d",
-                basename.c_str(), lp.fpsMeasurer.GetFps(), delta_ms, opt.gain, opt.expo);
+           snprintf(buff, sizeof(buff), "%s %s %3dfps %3.0fms gain=%d exp=%d",
+                g.dateStamp.c_str(), basename.c_str(), lp.fpsMeasurer.GetFps(), delta_ms, opt.gain, opt.expo);
         } else {
-           snprintf(buff, sizeof(buff), "%s %3dfps %3.1fms gain=%d exp=%d",
-                basename.c_str(), lp.fpsMeasurer.GetFps(), delta_ms, opt.gain, opt.expo);
+           snprintf(buff, sizeof(buff), "%s %s %3dfps %3.1fms gain=%d exp=%d",
+                g.dateStamp.c_str(), basename.c_str(), lp.fpsMeasurer.GetFps(), delta_ms, opt.gain, opt.expo);
         }
         string text = buff;
         if (opt.vary_both) {
@@ -458,33 +569,40 @@ int loopCallback( void *ptr, int size ) {
         image.basename = basename;
         image.syst_timestamp = syst_timestamp_this;
         image.stdy_timestamp = timestamp_this;
+        image.datestamp = g.dateStamp;
         image.gain = opt.gain;
         image.expo = opt.expo;
         image.fps  = lp.fpsMeasurer.GetFps();
         image.delta_ms = delta_ms;
         image.text = text;
+        image.width  = 768;
+        image.height = 544;
 
         swap( lp.stdy_time_last, lp.stdy_time_this ) ;
 
+        // if display is set then show the image
+        if ( opt.display ) {
+            showImage(image);
+        }
 
-        // ok now to save stuff...
+        // ok now to save raw/dng
         if (! opt.nosave) {
             saveRaw(image);
             saveDng(image);
-        }
+        } 
 
-
-        if (opt.create_jpeg_for_all) {
-            saveDng(image);
-            saveJpgExternal(image.text, image.basename ) ;
+        // save jpg
+        if (opt.alljpg) {
+            saveJpg(image);
         } else {
-            // Use wait_for() with zero time to check thread status.
-            chrono::nanoseconds ns(1);
-            auto status = sd.job.wait_for(ns);
-            if (status == future_status::ready) {
-                saveDng(image);
-                sd.job = async(launch::async, saveJpgExternal, image.text, image.basename ) ;
-            } 
+            if (! opt.nojpg) {
+                chrono::nanoseconds ns(1);
+                auto status = sd.job.wait_for(ns);
+                if (status == future_status::ready) {
+                    saveDng(image);
+                    sd.job = async(launch::async, saveJpg, image ) ;
+                } 
+            }
          }
 
         // all done with processing 
@@ -537,7 +655,7 @@ string constructImageInfoTag(Imagedata image) {
      ss << "frame="              << image.basename        << ":";
      ss << "syst_timestamp="     << image.syst_timestamp  << ":";
      ss << "stdy_timestamp="     << image.stdy_timestamp  << ":";
-     ss << "datestamp="          << g.dateStamp           << ":";
+     ss << "datestamp="          << image.datestamp       << ":";
      ss << "gain="               << image.gain            << ":";
      ss << "expo="               << image.expo            << ":";
      ss << "sweep_index="        << lp.index_of_gaex_sweep  << ":";
@@ -624,6 +742,8 @@ int saveDngFile(char *data, int old_length, string filename, string imageinfo) {
     outfile.write (reinterpret_cast<const char*>(&outdata[0]), new_length);
     outfile.close();
 
+    fs::copy(filename, fp.file_current_dng, fs::copy_options::overwrite_existing);
+
 }
 
 void generateGainExposureTable() {
@@ -639,6 +759,7 @@ void generateGainExposureTable() {
     LOGI << "    gain range =     " << cv::Point(opt.min_gain, opt.max_gain) << " in steps of " << opt.step_gain ;
     LOGI << "    exposure range = " << cv::Point(opt.min_expo, opt.max_expo) << " in steps of " << opt.step_expo ;
     LOGI << "    total values in sweep  =  " << g.gaex_table.size() ;
+    g.tot_num_in_gaex_sweep = g.gaex_table.size();
 
     // record the number somewhere...
 
@@ -746,7 +867,10 @@ string exec(string cmd) {
 }
 
 
-void saveJpgExternal(string text, string basename ) {
+void saveJpg(Imagedata image) {
+    string text = image.text;
+    string basename = image.basename;
+
 
     // long names => smaller font
     // formula determined by experiments
@@ -760,7 +884,7 @@ void saveJpgExternal(string text, string basename ) {
     LOGV << "running cmd=" << command ;
     //cout << "running cmd: " << cmd << endl;
     //system( (const char *) cmd.c_str());
-    PLOGI << exec(command);
+    LOGI << exec(command);
     fs::copy(file_jpg, fp.file_current_jpg, fs::copy_options::overwrite_existing);
 
 }
@@ -802,11 +926,14 @@ void processArgs(int argc, char** argv) {
         OptMinExposure,
         OptMaxExposure,
         OptVaryBoth,
+        OptAllJpg,
         OptNoSave,
-        OptNoDisplay,
+        OptNoJpg,
         OptNoExif,
-        OptComment,
-        OptVerbose
+        OptDisplay,
+        OptInteractive,
+        OptVerbose,
+        OptComment
     };
     static struct option long_opts[] = {
         {"minutes",       required_argument,  0,    OptMinutes },
@@ -826,9 +953,12 @@ void processArgs(int argc, char** argv) {
         {"min_exposure",  required_argument,  0,    OptMinExposure },
         {"max_exposure",  required_argument,  0,    OptMaxExposure },
         {"vary_both",     no_argument,        0,    OptVaryBoth },
+        {"alljpg",        no_argument,        0,    OptAllJpg },
         {"nosave",        no_argument,        0,    OptNoSave },
-        {"nodisplay",     no_argument,        0,    OptNoDisplay },
+        {"nojpg",         no_argument,        0,    OptNoJpg },
         {"noexif",        no_argument,        0,    OptNoExif },
+        {"display",       no_argument,        0,    OptDisplay },
+        {"interactive",   no_argument,        0,    OptInteractive },
         {"verbose",       no_argument,        0,    OptVerbose },
         {"comment",       required_argument,  0,    OptComment },
         {NULL,            0,               NULL,    0}
@@ -853,71 +983,87 @@ void processArgs(int argc, char** argv) {
         switch (options) {
         case OptMinutes:
             opt.minutes = stoi(optarg);
-            PLOGI << "Option: Minutes set to: " << opt.minutes ;
+            LOGI << "Option: Minutes set to: " << opt.minutes ;
             break;
         case OptFrames:
             opt.frames = stoi(optarg);
-            PLOGI << "Option: Frames set to: " << opt.frames ;
+            LOGI << "Option: Frames set to: " << opt.frames ;
             break;
         case OptGain:
             opt.gain = stoi(optarg);
-            PLOGI << "Option: Gain set to: " << opt.gain ;
+            LOGI << "Option: Gain set to: " << opt.gain ;
             break;
         case OptExposure:
             opt.expo = stoi(optarg);
-            PLOGI << "Option: Exposure set to: " << opt.expo ;
+            LOGI << "Option: Exposure set to: " << opt.expo ;
             break;
         case OptFps:
             opt.fps = stoi(optarg);
-            PLOGI << "Option: fps set to: " << opt.fps ;
+            LOGI << "Option: fps set to: " << opt.fps ;
             break;
         case OptVaryGain:
             opt.vary_gain = true;
-            PLOGI << "Option: sweep gain from min to max" ;
+            LOGI << "Option: sweep gain from min to max" ;
             break;
         case OptMinGain:
             opt.min_gain = stoi(optarg);
-            PLOGI << "Option: Min gain set to: " << opt.min_gain ;
+            LOGI << "Option: Min gain set to: " << opt.min_gain ;
             break;
         case OptMaxGain:
             opt.max_gain = stoi(optarg);
-            PLOGI << "Option: Max gain set to: " << opt.max_gain ;
+            LOGI << "Option: Max gain set to: " << opt.max_gain ;
             break;
         case OptVaryExposure:
             opt.vary_expo = true;
-            PLOGI << "Option: sweep exposure from min to max" ;
+            LOGI << "Option: sweep exposure from min to max" ;
             break;
         case OptMinExposure:
             opt.min_expo = stoi(optarg);
-            PLOGI << "Option: Min exposure set to: " << opt.min_expo ;
+            LOGI << "Option: Min exposure set to: " << opt.min_expo ;
             break;
         case OptMaxExposure:
             opt.max_expo = stoi(optarg);
-            PLOGI << "Option: Max exposure set to: " << opt.max_expo ;
+            LOGI << "Option: Max exposure set to: " << opt.max_expo ;
             break;
         case OptVaryBoth:
             opt.vary_both = true;
-            PLOGI << "Option: sweep both gain and exposure from min to max" ;
+            LOGI << "Option: sweep both gain and exposure from min to max" ;
+            break;
+        case OptAllJpg:
+            opt.alljpg = true;
+            LOGI << "Option: save all jpeg files" ;
             break;
         case OptNoSave:
             opt.nosave = true;
-            PLOGI << "Option: no saving raw or jpeg files" ;
+            LOGI << "Option: no saving raw or jpeg files" ;
             break;
         case OptNoExif:
             opt.noexif = true;
-            PLOGI << "Option: no exif metadata in jpeg files" ;
+            LOGI << "Option: no exif metadata in jpeg files" ;
             break;
-        case OptNoDisplay:
-            opt.nodisplay = true;
-            PLOGI << "Option: no display or jpeg files" ;
+        case OptNoJpg:
+            opt.nojpg = true;
+            LOGI << "Option: no jpeg files" ;
             break;
         case OptComment:
             opt.comment = string(optarg);
-            PLOGI << "Option: comment: " << opt.comment ;
+            LOGI << "Option: comment: " << opt.comment ;
+            break;
+        case OptDisplay:
+            opt.display = true;
+            LOGI << "Option: show live view" ;
+            break;
+        case OptInteractive:
+            opt.interactive = true;
+            LOGI << "Option: show live view and turn off saving" ;
+            opt.display = true;
+            opt.nosave = true;
+            opt.nojpg = true;
+            opt.frames = 100000;
             break;
         case OptVerbose:
             opt.verbose = true;
-            PLOGI << "Option: verbose mode" ;
+            LOGI << "Option: verbose mode" ;
             // turn on verbose reporting
             plog::get()->setMaxSeverity(plog::verbose);
             break;
@@ -1200,6 +1346,7 @@ void saveRaw(Imagedata image) {
 void cleanUp () {
     // clean up...
     LOGV << " final cleanup.." << endl << flush;;
+    destroyAllWindows();
     sd.job.wait();
     for (auto& th : sd.threads) {
         th.join();
