@@ -10,6 +10,7 @@
 
 
 #include "capture.hpp"
+#include "Imagedata.hpp"
 
 // global vars -- but in a struct so that makes it ok :-)
 struct Options {
@@ -40,25 +41,19 @@ struct Options {
     bool interactive = false;
     bool verbose = false;
 
-
-    string header  = "Tensorfield Ag (c) 2020";
     string comment = "";
 
 } opt;
 
 struct Globals {
+    string header  = "Tensorfield Ag (c) 2020";
+    string command;
     // gain+exposure table
     list < cv::Point > gaex_table;
     list < cv::Point >::iterator gaex_table_ptr;
-    int tot_num_in_gaex_sweep = 0;
-
-    //dng header
-    char* dng_headerdata = NULL;
-    int   dng_headerlength = 0;
-    int   dng_attribute_start = 5310;
 
     //
-    string dateStamp;
+    string datestamp;
     string mainWindowName;
 
     int imagewidth  = 768;
@@ -94,7 +89,8 @@ struct Loop {
     int frameSaved = 0;
     int maxIntegerWidth;
     common::FpsMeasurer fpsMeasurer;
-    int index_of_gaex_sweep = 0;
+    int sweep_index = 0;
+    int sweep_total = 0;
     int duration_between_saves_ms = 0;
 
     chrono::system_clock::time_point syst_time_prog = chrono::system_clock::now();
@@ -113,35 +109,16 @@ struct shutDown {
     future <void> job;
 } sd;
 
-struct Imagedata {
-    char* data;                     /**< Raw pointer to buffer */
-    string basename;
-    long syst_timestamp;
-    long stdy_timestamp;
-    string datestamp;
-    int gain;
-    int expo;
-    int fps;
-    float delta_ms;
-    string text;
-    int id;                    /**< Image sequence number */
-    int bufferid;              /**< Buffer id number */
-    int length;                /**< Image length in bytes */
-    int width;                 /**< Image width in pixels */
-    int height;                /**< Image height in pixels */
-    int pixelFormat;           /**< Image pixel format */
-    int stride;                /**< Image stride, padding included */
-};
+
+// init Imagedata class
+Imagedata::ClassInit Imagedata::readDngHeaderData(fp.headerfile);
 
 
-
-// protos...i prefer having them here over in .hpp
+// protos...i prefer having them here over instead of way over in .hpp
 void PrintHelp() ;
 void setupDirs() ;
 void setupCamera() ;
 void runCaptureLoop(ICamera *camera) ;
-string constructImageInfoTag(Imagedata image) ;
-void readDngHeaderData() ;
 void generateGainExposureTable() ;
 void saveAndDisplayJpgDirect(ICamera *camera, IProcessedImage processedImage, string text, string basename) ;
 string exec(string cmd);
@@ -160,8 +137,7 @@ void varyGain (void) ;
 void varyExposure (void) ;
 int varyBoth (void) ;
 void saveRaw(Imagedata image) ;
-int saveDng(Imagedata image) ;
-int saveDngFile(char *data, int datalength, string filename, string imageinfo) ;
+void saveDng(Imagedata image) ;
 void cleanUp (void) ;
 void setupLoop(void);
 void endLoop(void);
@@ -256,8 +232,8 @@ void setupDirs() {
     fp.file_next_jpg    = fp.folder_data / "next.jpg";
 
     // filename stuff...
-    g.dateStamp  = getDateStamp();
-    fp.folder_base = fp.folder_data / g.dateStamp;
+    g.datestamp  = getDateStamp();
+    fp.folder_base = fp.folder_data / g.datestamp;
     fs::create_directories(fp.folder_base);
 
     fp.file_log = fp.folder_base / "run.log";
@@ -274,19 +250,18 @@ void setupDirs() {
     //plog::Severity maxSeverity = opt.verbose ? plog::verbose : plog::info;
     plog::init(plog::info, &fileAppender).addAppender(&consoleAppender);
 
-    LOGI << opt.header ;
+    LOGI << g.header ;
     LOGI << opt.comment ;
 
     fp.folder_raw = fp.folder_base / "raw"; fs::create_directories(fp.folder_raw);
     fp.folder_dng = fp.folder_base / "dng"; fs::create_directories(fp.folder_dng);
     fp.folder_jpg = fp.folder_base / "jpg"; fs::create_directories(fp.folder_jpg);
 
-    LOGI << "results under:" << fp.folder_base ;
-    LOGI << "   raw under : "  << fp.folder_raw;
-    LOGI << "   dng under : "  << fp.folder_dng;
-    LOGI << "   jpg under : "  << fp.folder_jpg;
+    LOGI << "results under:" << fp.folder_base.string() ;
+    LOGV << "   raw under : "  << fp.folder_raw.string();
+    LOGV << "   dng under : "  << fp.folder_dng.string();
+    LOGV << "   jpg under : "  << fp.folder_jpg.string();
 
-    readDngHeaderData();
 }
 
 void setupCamera() {
@@ -429,8 +404,8 @@ void showImage(Imagedata image) {
     //minMaxLoc(image_colorcorr, &min, &max);
     //LOGV << "image_colorcorr (black,white) = " << Point(min,max);
     imshow(g.mainWindowName,image_bayer1);
-    displayOverlay(g.mainWindowName, image.text, 0);
-    displayStatusBar(g.mainWindowName, image.text, 0);
+    displayOverlay(g.mainWindowName, image.text_north, 0);
+    displayStatusBar(g.mainWindowName, image.text_east, 0);
 
     int key = cv::waitKey(1);
     if (key >= 0) {
@@ -495,7 +470,7 @@ void startLoopCallback( void ) {
     syncGainExpo();
 
     if (opt.vary_both) {
-        lp.index_of_gaex_sweep = varyBoth();
+        lp.sweep_index = varyBoth();
     } else {
         if (opt.vary_gain)
             varyGain();
@@ -511,239 +486,142 @@ int endLoopCalback( void *ptr, int size ) {
         return(0);
     }
 
-        // actually store the image
-        Imagedata image;
-        image.length = size;
-        // TODO: do we really need memcpy?
-        image.data = new char [image.length];
-        memcpy(image.data,ptr,image.length);
+   // actually store the image
+   Imagedata image;
+   image.size = size;
+   // TODO: do we really need memcpy?
+   image.data = new char [image.size];
+   memcpy(image.data,ptr,image.size);
 
-        if (image.data == nullptr) {
-            LOGE << "Unable to save frame, invalid image data" ;
-            return(-1);
-        }
+   if (image.data == nullptr) {
+       LOGE << "Unable to save frame, invalid image data" ;
+       return(-1);
+   }
 
-        //string num = to_string(lp.num_frames++);
-        //num.insert(num.begin(), lp.maxIntegerWidth - num.length(), '0');
-        //string basename     = "frame" + num ;
+   //string num = to_string(lp.num_frames++);
+   //num.insert(num.begin(), lp.maxIntegerWidth - num.length(), '0');
+   //string basename     = "frame" + num ;
 
-        lp.fpsMeasurer.FrameReceived();
+   lp.fpsMeasurer.FrameReceived();
 
-        lp.syst_time_this  = chrono::system_clock::now();
-        lp.stdy_time_this =  chrono::steady_clock::now();
-        // need another duration_cast<duration<double>> ?
-        // or duration_cast<milliseconds>
-        chrono::duration<double, std::milli> delta_time = lp.stdy_time_this - lp.stdy_time_last;
-        float delta_ms = delta_time.count();
-        long timestamp_last = lp.stdy_time_last.time_since_epoch().count();
-        long timestamp_this = lp.stdy_time_this.time_since_epoch().count();
-        //LOGV << " dt = " << timestamp_this << " - " << timestamp_last << " = " << delta_ms << "ms" ;
-        long syst_timestamp_this = lp.syst_time_this.time_since_epoch().count();
-
-
-        char buff[BUFSIZ];
-        if (opt.vary_both or opt.vary_gain or opt.vary_expo) {
-            snprintf(buff, sizeof(buff), "img%0*d_G%03dE%04d",lp.maxIntegerWidth, lp.num_frames++, opt.gain, opt.expo);
-        } else {
-            snprintf(buff, sizeof(buff), "img%0*d", lp.maxIntegerWidth, lp.num_frames++);
-        }
-        string basename = buff;
-
-        if (delta_ms > 10) {
-           snprintf(buff, sizeof(buff), "%s %s %3dfps %3.0fms gain=%d exp=%d",
-                g.dateStamp.c_str(), basename.c_str(), lp.fpsMeasurer.GetFps(), delta_ms, opt.gain, opt.expo);
-        } else {
-           snprintf(buff, sizeof(buff), "%s %s %3dfps %3.1fms gain=%d exp=%d",
-                g.dateStamp.c_str(), basename.c_str(), lp.fpsMeasurer.GetFps(), delta_ms, opt.gain, opt.expo);
-        }
-        string text = buff;
-        if (opt.vary_both) {
-                int length = to_string(g.tot_num_in_gaex_sweep).length();
-                snprintf(buff, sizeof(buff), " sweep=%*d/%d",
-                        length,lp.index_of_gaex_sweep,g.tot_num_in_gaex_sweep);
-                text += buff;
-        }
-        LOGV << "\t" << text;
-
-        // update rest image attributes
-        image.basename = basename;
-        image.syst_timestamp = syst_timestamp_this;
-        image.stdy_timestamp = timestamp_this;
-        image.datestamp = g.dateStamp;
-        image.gain = opt.gain;
-        image.expo = opt.expo;
-        image.fps  = lp.fpsMeasurer.GetFps();
-        image.delta_ms = delta_ms;
-        image.text = text;
-        image.width  = 768;
-        image.height = 544;
-
-        swap( lp.stdy_time_last, lp.stdy_time_this ) ;
-
-        // if display is set then show the image
-        if ( opt.display ) {
-            showImage(image);
-        }
-
-        // ok now to save raw/dng
-        if (! opt.nosave) {
-            saveRaw(image);
-            saveDng(image);
-        } 
-
-        // save jpg
-        if (opt.alljpg) {
-            saveJpg(image);
-        } else {
-            if (! opt.nojpg) {
-                chrono::nanoseconds ns(1);
-                auto status = sd.job.wait_for(ns);
-                if (status == future_status::ready) {
-                    saveDng(image);
-                    sd.job = async(launch::async, saveJpg, image ) ;
-                } 
-            }
-         }
-
-        // all done with processing 
-        free(image.data);
+   lp.syst_time_this  = chrono::system_clock::now();
+   lp.stdy_time_this =  chrono::steady_clock::now();
+   // need another duration_cast<duration<double>> ?
+   // or duration_cast<milliseconds>
+   chrono::duration<double, std::milli> delta_time = lp.stdy_time_this - lp.stdy_time_last;
+   float delta_ms = delta_time.count();
+   long timestamp_last = lp.stdy_time_last.time_since_epoch().count();
+   long timestamp_this = lp.stdy_time_this.time_since_epoch().count();
+   //LOGV << " dt = " << timestamp_this << " - " << timestamp_last << " = " << delta_ms << "ms" ;
+   long syst_timestamp_this = lp.syst_time_this.time_since_epoch().count();
 
 
-        // ready to return...but first check if we should exist or wait instead
+   char buff[BUFSIZ];
+   if (opt.vary_both or opt.vary_gain or opt.vary_expo) {
+       snprintf(buff, sizeof(buff), "img%0*d_G%03dE%04d",lp.maxIntegerWidth, lp.num_frames++, opt.gain, opt.expo);
+   } else {
+       snprintf(buff, sizeof(buff), "img%0*d", lp.maxIntegerWidth, lp.num_frames++);
+   }
+   string basename = buff;
 
-        // exit on minutes of wall clock time?
-        // TODO: handle case when both opt.minutes and opt.frames is set
-        // TODO: not really working because frame_count is ignored during main
-        // loop
-        lp.syst_time_this = chrono::system_clock::now();
-        if (opt.minutes > 0) {
-            chrono::duration<double, milli> elapsed_time = lp.syst_time_this - lp.syst_time_prog;
-            int duration_min = round(chrono::duration_cast<chrono::minutes> 
-                    (elapsed_time).count());
-            if (duration_min > opt.minutes) {
-                // exit
-                //frame_count = lp.num_frames;
-            }
-        }
+   // update rest image attributes
+    image.src = "camera";
+    image.dst = fp.folder_raw / (basename + ".raw");
+    image.basename = basename;
+    image.datestamp= g.datestamp;
+    image.system_clock_ns=syst_timestamp_this;
+    image.steady_clock_ns=timestamp_this;
+    image.gain=opt.gain;
+    image.expo=opt.expo;
+    image.sweep_index=lp.sweep_index;
+    image.sweep_total=lp.sweep_total;
+    image.fps  = lp.fpsMeasurer.GetFps();
+    image.delta_ms=delta_ms;
+    image.comment=opt.comment;
+    image.command=g.command;
 
-        // ratelimit if opt.fps is set
-        //
-        //
-        //
-        if (opt.fps > 0) {
-            int sleep_duration_ms = lp.duration_between_saves_ms - delta_ms;
-            if (sleep_duration_ms > 0) {
-                this_thread::sleep_for(chrono::milliseconds(sleep_duration_ms));
-            }
-        }
 
-        return(0);
+
+    swap( lp.stdy_time_last, lp.stdy_time_this ) ;
+
+   // if display is set then show the image
+   if ( opt.display ) {
+       showImage(image);
+   }
+
+   // ok now to save raw/dng
+   if (! opt.nosave) {
+       saveRaw(image);
+       saveDng(image);
+   } 
+
+   // save jpg
+   if (opt.alljpg) {
+       saveJpg(image);
+   } else {
+       if (! opt.nojpg) {
+           chrono::nanoseconds ns(1);
+           auto status = sd.job.wait_for(ns);
+           if (status == future_status::ready) {
+               saveDng(image);
+               sd.job = async(launch::async, saveJpg, image ) ;
+           } 
+       }
+    }
+
+   // all done with processing 
+   //free(image.data);
+
+
+   // ready to return...but first check if we should exist or wait instead
+
+   // exit on minutes of wall clock time?
+   // TODO: handle case when both opt.minutes and opt.frames is set
+   // TODO: not really working because frame_count is ignored during main
+   // loop
+   lp.syst_time_this = chrono::system_clock::now();
+   if (opt.minutes > 0) {
+       chrono::duration<double, milli> elapsed_time = lp.syst_time_this - lp.syst_time_prog;
+       int duration_min = round(chrono::duration_cast<chrono::minutes> 
+               (elapsed_time).count());
+       if (duration_min > opt.minutes) {
+           // exit
+           //frame_count = lp.num_frames;
+       }
+   }
+
+   // ratelimit if opt.fps is set
+   //
+   //
+   //
+   if (opt.fps > 0) {
+       int sleep_duration_ms = lp.duration_between_saves_ms - delta_ms;
+       if (sleep_duration_ms > 0) {
+           this_thread::sleep_for(chrono::milliseconds(sleep_duration_ms));
+       }
+   }
+
+   return(0);
 
 } // end of loop
 
 void endLoop(void) {
     // cleanup
-    LOGI << "\nSaved " << lp.num_frames << " frames to " << fp.folder_raw << " folder with fps = " << lp.fpsMeasurer.GetFps() << flush;
-    LOGI << "session log :" << fp.file_log << endl;
+    LOGI << "\nSaved " << lp.num_frames << " frames to " << fp.folder_raw.string() << " folder with fps = " << lp.fpsMeasurer.GetFps() << flush;
+    LOGI << "session log :" << fp.file_log.string() << endl;
 }
 
-// to go into exif of jpeg eventually...
-string constructImageInfoTag(Imagedata image) {
 
-     stringstream ss;
-     ss << "header="             << opt.header            << ":";
-     ss << "frame="              << image.basename        << ":";
-     ss << "syst_timestamp="     << image.syst_timestamp  << ":";
-     ss << "stdy_timestamp="     << image.stdy_timestamp  << ":";
-     ss << "datestamp="          << image.datestamp       << ":";
-     ss << "gain="               << image.gain            << ":";
-     ss << "expo="               << image.expo            << ":";
-     ss << "sweep_index="        << lp.index_of_gaex_sweep  << ":";
-     ss << "sweep_total="        << g.tot_num_in_gaex_sweep << ":";
-     ss << "fps="                << image.fps             << ":";
-     ss << "delta_ms="           << image.delta_ms        << ":";
-     ss << "image.length="       << image.length          << ":";
-     ss << "comment="            << opt.comment           << ":";
-
-     
-     /*
-     ss << "image.id="           << image.id            << ":";
-     ss << "image.width="        << image.width         << ":";
-     ss << "image.height="       << image.height        << ":";
-     ss << "image.pixelFormat="  << image.pixelFormat   << ":";
-     ss << "image.stride="       << image.stride        << ":";
-     ss << "image.timestamp.s="  << image.timestamp.s   << ":";
-     ss << "image.timestamp.us=" << image.timestamp.us  << ":";
-     */
-
-     return ss.str();
-}
-
-void readDngHeaderData() {
-    g.dng_headerlength = fs::file_size(fp.headerfile);
-    LOGI << " dng header : " << fp.headerfile << " size = " << g.dng_headerlength ;
-    g.dng_headerdata = new char [g.dng_headerlength];
-    ifstream fhead (fp.headerfile, ios::in|ios::binary);
-    fhead.read (g.dng_headerdata, g.dng_headerlength);
-    fhead.close();
-}
-
-int saveDng(Imagedata image) {
-
-    string imageinfo = constructImageInfoTag(image);
+void saveDng(Imagedata image) {
 
     fs::path file_dng = fp.folder_dng / (image.basename + ".dng");
-    saveDngFile(image.data, image.length, file_dng, imageinfo);
-    //LOGV << "dng output: " << file_dng ;
-    //LOGV << "  tags = " << imageinfo ;
+	image.writeDng(file_dng);
 }
 
-int saveDngFile(char *data, int old_length, string filename, string imageinfo) {
+void saveRaw(Imagedata image) {
 
-    // read in header data once if it doesn't exist
-    if (g.dng_headerdata == nullptr) {
-        readDngHeaderData();
-    }
-
-    //modify header with image attributes
-    // TODO seek for <?xpacket end="w"?> once and store that position
-    // instead of using hardcoded header start
-    vector<char> mod_headerdata(g.dng_headerdata,g.dng_headerdata + g.dng_headerlength);
-    for (int i = 0; i < imageinfo.size(); i++) {
-        mod_headerdata.at(i+g.dng_attribute_start) = imageinfo[i];
-    }
-
-    //correct the size of data
-
-    int old_width  = 768*2;
-    int height = old_length / old_width; // expect 544
-    //TODO assert should be 544
-
-    int new_width = 728*2; // 40 pixel stride
-    int new_length = new_width * height;
-
-    vector<char> indata(data, data + old_length);
-    vector<char> outdata(new_length, 0);
-
-    for (int x = 0; x < old_width ; x++) {
-        for (int y=0;y < height ; y++) {
-            if (x < new_width) {
-                int old_pixel = x + y * old_width;
-                int new_pixel = x + y * new_width;
-                outdata.at(new_pixel) = indata.at(old_pixel);
-            }
-        }
-    }
-
-
-    fs::remove(filename);
-    ofstream outfile (filename,ofstream::binary);
-    outfile.write (reinterpret_cast<const char*>(&mod_headerdata[0]), g.dng_headerlength);
-    outfile.write (reinterpret_cast<const char*>(&outdata[0]), new_length);
-    outfile.close();
-
-    fs::copy(filename, fp.file_current_dng, fs::copy_options::overwrite_existing);
-
+    fs::path file_raw = fp.folder_dng / (image.basename + ".raw");
+	image.writeRaw(file_raw);
 }
 
 void generateGainExposureTable() {
@@ -751,7 +629,7 @@ void generateGainExposureTable() {
     for (int value_gain = opt.min_gain; value_gain < opt.max_gain; value_gain += opt.step_gain) {
         for (int value_expo = opt.min_expo; value_expo < opt.max_expo; value_expo += opt.step_expo) {
             g.gaex_table.push_back(cv::Point(value_gain, value_expo ));
-            LOGV << " Vary table " << g.tot_num_in_gaex_sweep++ << ": (gain,expo) = " << cv::Point(value_gain, value_expo) ;
+            LOGV << " Vary table " << lp.sweep_total++ << ": (gain,expo) = " << cv::Point(value_gain, value_expo) ;
         }
     }
 
@@ -759,7 +637,7 @@ void generateGainExposureTable() {
     LOGI << "    gain range =     " << cv::Point(opt.min_gain, opt.max_gain) << " in steps of " << opt.step_gain ;
     LOGI << "    exposure range = " << cv::Point(opt.min_expo, opt.max_expo) << " in steps of " << opt.step_expo ;
     LOGI << "    total values in sweep  =  " << g.gaex_table.size() ;
-    g.tot_num_in_gaex_sweep = g.gaex_table.size();
+    lp.sweep_total = g.gaex_table.size();
 
     // record the number somewhere...
 
@@ -780,7 +658,7 @@ void generateGainExposureTable() {
 void saveAndDisplayJpgDirect(ICamera *camera, IProcessedImage processedImage, string text, string basename) {
     common::ImageProcessor processor;
     // TODO: use image attribute date instead
-    const string dateStamp  = getDateStamp();
+    const string datestamp  = getDateStamp();
 
     cv::UMat mImage;
     uint32_t length = processedImage.length;
@@ -810,7 +688,7 @@ void saveAndDisplayJpgDirect(ICamera *camera, IProcessedImage processedImage, st
         exifData["Exif.Image.Model"] = "tensorfield ag";
         exifData["Exif.Image.AnalogBalance"] = opt.gain;
         exifData["Exif.Image.ExposureTime"] = opt.expo;
-        exifData["Exif.Image.DateTimeOriginal"] = dateStamp;
+        exifData["Exif.Image.DateTimeOriginal"] = datestamp;
         eImage->setExifData(exifData);
         eImage->writeMetadata();
         if (opt.verbose) {
@@ -868,25 +746,15 @@ string exec(string cmd) {
 
 
 void saveJpg(Imagedata image) {
-    string text = image.text;
-    string basename = image.basename;
 
+    fs::path file_dng = fp.folder_dng / (image.basename + ".dng");
+    fs::path file_jpg = fp.folder_jpg / (image.basename + ".jpg");
 
-    // long names => smaller font
-    // formula determined by experiments
-    int pointsize = (float) 1000 / (float) text.length() - 2 ;
+	image.createAnnoText();
+	image.src = file_dng;
+	image.writeAnnotated(file_jpg, true);
 
-    fs::path file_dng = fp.folder_dng / (basename + ".dng");
-    fs::path file_jpg = fp.folder_jpg / (basename + ".jpg");
-    //string cmd = "rawtherapee-cli -Y -o /home/deep/build/snappy/capture/next.jpg -q -p /home/deep/build/snappy/bin/wb.pp4 -c " + folderDng + filenameDng;
-    string command = "rawtherapee-cli -Y -o " +  fp.file_next_jpg.string() + " -q -c " +  file_dng.string();
-    command += "; magick " +  fp.file_next_jpg.string() + " -clahe 25x25%+128+2 -pointsize " + to_string(pointsize) + " -font Inconsolata -fill yellow -gravity East -draw \'translate 15,232 rotate 90 text 0,0 \" " + text + " \" \'   " + file_jpg.string() ;
-    LOGV << "running cmd=" << command ;
-    //cout << "running cmd: " << cmd << endl;
-    //system( (const char *) cmd.c_str());
-    LOGI << exec(command);
     fs::copy(file_jpg, fp.file_current_jpg, fs::copy_options::overwrite_existing);
-
 }
 
 
@@ -968,10 +836,8 @@ void processArgs(int argc, char** argv) {
     // http://www.cplusplus.com/forum/beginner/211100/
     stringstream ss;
     copy( argv, argv+argc, ostream_iterator<const char*>( ss, " " ) ) ;
-    LOGI << ss.str();
-
-    //copy( argv, argv+argc, ostream_iterator<const char*>( cout, " " ) ) ;
-    //cout << endl;
+    g.command = ss.str();
+    LOGI << g.command;
 
     while (true) {
         const auto options = getopt_long(argc, argv, short_opts, long_opts, nullptr);
@@ -1322,26 +1188,6 @@ int varyBoth (void) {
     return distance(g.gaex_table.begin(),g.gaex_table_ptr);
 }
 
-
-void saveRaw(Imagedata image) {
-
-    fs::path filename = fp.folder_raw / (image.basename + ".raw");
-    remove(filename.c_str());
-    int fd = open (filename.c_str(), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-    if (fd == -1) {
-        LOGE << "Unable to save frame, cannot open file " << filename ;
-        return;
-    }
-
-    int writenBytes = write(fd, image.data, image.length);
-    if (writenBytes < 0) {
-        LOGE << "Error writing to file " << filename ;
-    } else if ( (uint32_t) writenBytes != image.length) {
-        LOGW << "Warning: " << writenBytes << " out of " << image.length << " were written to file " << filename ;
-    }
-
-    close(fd);
-}
 
 void cleanUp () {
     // clean up...
