@@ -7,13 +7,17 @@
 #include <nlohmann/json.hpp>
 #include <experimental/filesystem>
 namespace fs=std::experimental::filesystem;
-
 #include <iostream>
 #include <fstream>
 #include <istream>
 #include <ostream>
 #include <sstream>
 #include <assert.h>
+
+// for threading
+#include <future>
+#include <thread>
+#include <chrono>
 
 //logging
 #include <plog/Log.h>
@@ -129,8 +133,8 @@ class Imagedata{
         delta_ms=251.198;
 
         bpp = 16;
-        width = 544;
-        height = 728;
+        width = 728;
+        height = 544;
         size = 835584;
 
         comment="run with lower camera";
@@ -192,8 +196,8 @@ class Imagedata{
         fin.close();
 
         width = size / ( height * bpp / CHAR_BIT);
-        LOGV << "loaded " << src << " size:" << size
-            << " = w:" << width << " * h:" << height << " * bpp:" << bpp << " / CHAR_BIT:" << CHAR_BIT;
+        //LOGV << "loaded " << src << " size:" << size
+        //    << " = w:" << width << " * h:" << height << " * bpp:" << bpp << " / CHAR_BIT:" << CHAR_BIT;
     }
 
     void writeRaw(fs::path filename) {
@@ -219,7 +223,7 @@ class Imagedata{
 
     void createAnnoText() { 
 
-        char buff[BUFSIZ];                                                                                                                                             
+        char buff[BUFSIZ];
         int delta_ms_precision = (delta_ms > 10) ? 0 : 1 ;
         snprintf(buff, sizeof(buff), "%s %3.0ffps %3.*fms gain=%d exp=%d", 
                 basename.c_str(), fps, delta_ms_precision, delta_ms, gain, expo);
@@ -240,6 +244,20 @@ class Imagedata{
         text_east = datestamp + buff + comment;
 
     }
+
+
+    // launch and return
+    void writeJpg(fs::path file_dest) {
+
+        dst = file_dest;
+        string command = "rawtherapee-cli -Y -o " +  dst + " -q -c " +  src;
+        chrono::nanoseconds ns(1);
+        auto status = job_queue.wait_for(ns);
+        if (status == future_status::ready) {
+            job_queue = async(launch::async, runThreadedCommand, command);
+        }
+    }
+
 
     void getExif() {
 
@@ -279,10 +297,11 @@ class Imagedata{
         char** argv = cstrings.data();
 
         LOGV << "cmd = " << cmd;
-        //copy( argv, argv+argc, ostream_iterator<const char*>( cout, " " ) ) ;
-        //cout << "\n";
+        copy( argv, argv+argc, ostream_iterator<const char*>( cout, " " ) ) ;
+        cout << "\n";
 
         (void) MagickImageCommand(image_info, argc, argv, NULL, exception);
+        LOGV << "cmd DONE= " << cmd;
 
        if (exception->severity != UndefinedException) {
             CatchException(exception);
@@ -305,7 +324,7 @@ class Imagedata{
             string pointsize_north = to_string( (float) 1000 / (float) text_north.length() - 2 );
             string pointsize_east  = to_string( (float) 1000 / (float) text_east.length()  - 2 );
             // 728 x 544 -> 768 x 584
-            cmd = "magick  " + src + " -clahe 25x25%+128+2 -gravity Southwest -background black -extent 768x584 -font Inconsolata -pointsize " + pointsize_north + " -fill yellow -gravity North -annotate 0x0+0+15 \"" + text_north + "\" -gravity East -pointsize " + pointsize_east + " -annotate 90x90+20+232 \"" + text_east + "\" " + dst;
+            cmd = "/usr/local/bin/magick  " + src + " -clahe 25x25%+128+2 -gravity Southwest -background black -extent 768x584 -font Inconsolata -pointsize " + pointsize_north + " -fill yellow -gravity North -annotate 0x0+0+15 \"" + text_north + "\" -gravity East -pointsize " + pointsize_east + " -annotate 90x90+20+232 \"" + text_east + "\" " + dst;
         } else {
             cmd = "magick  " + src + " -clahe 25x25%+128+2 " + dst;
         }
@@ -329,13 +348,15 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     Magick::Blob  blob(image->data, image->filesize);
     Magick::Image mimg(blob);
     mimg.process("analyze",0,0);
+    //image.crop(Geometry(100, 100, 0, 0));
+    //image.repage();
 
     mimg.draw( Magick::DrawableLine( 300,100, 300,500 ) );
 
     LOGI << "filter:brightness:mean: " <<  mimg.attribute("filter:brightness:mean");
     LOGI << "filter:saturation:mean: " <<  mimg.attribute("filter:saturation:mean");
 
-    mimg.write( dst.string() );
+    mimg.write( dst );
 
 }
 */
@@ -348,21 +369,27 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         assert(dng_headerdata != nullptr);
 
         string imageinfo = attributes_to_json();
+        LOGV << "imageinfo = " << imageinfo; 
         // write attributes
+        // reset image size i
         vector<char> mod_headerdata(dng_headerdata,dng_headerdata + dng_headerlength);
-        for (int i = 0; i < imageinfo.size(); i++) {
+        for (int i = 0; i < imageinfo.length(); i++) {
             mod_headerdata.at(i+dng_attribute_start) = imageinfo[i];
         }
+        //LOGV << "mod_headerdata = " << mod_headerdata; 
 
         //reshape the size of data to get rid of band if needed ... assume width = 768 or 728
-        int old_line_width = width * bpp / CHAR_BIT;
-        int new_line_width = 728   * bpp / CHAR_BIT;
-        //height = 544;
+        int old_line_width = 768 * bpp / CHAR_BIT;
+        int new_line_width = 728 * bpp / CHAR_BIT;
+        height = 544;
 
+
+        LOGV << "old_line_width = " << old_line_width << " new_line_width = " << new_line_width; 
+        int olddatalength = old_line_width * height;
         int newdatalength = new_line_width * height;
 
-        vector<char> indata(data, data + size); // create vector with header
-        vector<char> outdata(newdatalength, 0); // fill with zeros
+        vector<char> indata (data, data + olddatalength); // fill vec with data
+        vector<char> outdata(data, data + newdatalength);
         for (int x = 0; x < old_line_width ; x++) {
             for (int y=0;y < height ; y++) {
                 if (x < new_line_width) {
@@ -373,7 +400,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
             }
         }
 
-        //LOGV << "out : " << dngname ;
+        LOGV << "writing to : " << dngname.string() ;
         //fs::remove(dngname);
         ofstream outfile (dngname,ofstream::binary);
         outfile.write (reinterpret_cast<const char*>(&mod_headerdata[0]), dng_headerlength);
@@ -402,7 +429,9 @@ int writeAnnotated(Imagedata image, fs::path dst) {
                 // also need to delete exiftool;
 
                 // init magick?
-                //MagickCoreGenesis();
+                MagickCoreGenesis(NULL,MagickFalse);
+
+                job_queue = async(launch::async, []{ });
 
             }
 
@@ -411,6 +440,9 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     // just once
 
  private:
+    // for job handling
+    static future <void> job_queue;
+    // also need to call job_queue.wait();
     //dng header 
     static char*  dng_headerdata;
     static int    dng_headerlength;
@@ -419,9 +451,37 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     // for exif
     static ExifTool *exiftool;
 
+    static void runThreadedCommand(string command) {
+        string result = exec(command);
+        if (result.length()) {
+            LOGV << "result from running cmd=" << command ;
+            LOGV << result;
+        }
+        //fs::copy(file_jpg, fp.file_current_jpg, fs::copy_options::overwrite_existing);
+    }
+
+    // https://stackoverflow.com/questions/478898/how-do-i-execute-a-command-and-get-the-output-of-the-command-     ↪ within-c-using-po
+    static string exec(string cmd) {
+
+        array<char, 128> buffer;
+        string result;
+        unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+        if (!pipe) {
+            throw runtime_error("popen() failed!");
+        }
+        while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+            result += buffer.data();
+        }
+        // remove blank lines from result
+        // https://stackoverflow.com/questions/22395333/removing-empty-lines-from-a-string-c
+        result.erase(unique(result.begin(), result.end(),
+                      [] (char a, char b) { return a == '\n' && b == '\n'; }),
+                  result.end());
+        return result;
+    }
 
     // romove junk like _ and space characters until first '{' from front and '}' from back
-    string trim(const std::string &s) {
+    static string trim(const std::string &s) {
         //cout << "start = " << s << endl;
         auto start = s.begin();
         while (start != s.end() and *start != '{') 
@@ -438,10 +498,11 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 }; /* end Class */
 
 
-// bring init vars to life
+// bring static  init vars to life
 int Imagedata::dng_headerlength = 0;
 int Imagedata::dng_attribute_start = 0;
 char* Imagedata::dng_headerdata = nullptr;
 ExifTool *Imagedata::exiftool = nullptr;
+future <void> Imagedata::job_queue ;
 
 

@@ -25,6 +25,9 @@
 
 #include <linux/videodev2.h>
 
+// logging
+#include <plog/Log.h>
+
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
 enum io_method {
@@ -64,7 +67,7 @@ static int xioctl(int fh, unsigned long int request, void *arg)
 	return r;
 }
 
-extern void process_image(void *ptr, int size);
+extern void process_image(void *ptr, int size, struct v4l2_buffer buf);
 static void original_process_image(const void *p, int size)
 {
 	if (out_buf)
@@ -84,8 +87,10 @@ static int read_frame(void)
     startLoopCallback();
 
 	switch (io) {
+    LOGV << " io = " << io << " IO_METHOD_READ = " << IO_METHOD_READ;
 	case IO_METHOD_READ:
 		if (-1 == read(fd, buffers[0].start, buffers[0].length)) {
+            LOGE << "error IO_METHOD_READ : " << errno;
 			switch (errno) {
 			case EAGAIN:
 				return 0;
@@ -100,7 +105,7 @@ static int read_frame(void)
 			}
 		}
 
-		process_image(buffers[0].start, buffers[0].length);
+		process_image(buffers[0].start, buffers[0].length, buf);
 		break;
 
 	case IO_METHOD_MMAP:
@@ -110,6 +115,7 @@ static int read_frame(void)
 		buf.memory = V4L2_MEMORY_MMAP;
 
 		if (-1 == xioctl(fd, VIDIOC_DQBUF, &buf)) {
+            LOGE << "error IO_METHOD_MMAP : " << errno;
 			switch (errno) {
 			case EAGAIN:
 				return 0;
@@ -126,7 +132,7 @@ static int read_frame(void)
 
 		assert(buf.index < n_buffers);
 
-		process_image(buffers[buf.index].start, buf.bytesused);
+		process_image(buffers[buf.index].start, buf.bytesused, buf);
 
 		if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
 			errno_exit("VIDIOC_QBUF");
@@ -139,6 +145,7 @@ static int read_frame(void)
 		buf.memory = V4L2_MEMORY_USERPTR;
 
 		if (-1 == xioctl(fd, VIDIOC_DQBUF, &buf)) {
+            LOGE << "error IO_METHOD_USERPTR : " << errno;
 			switch (errno) {
 			case EAGAIN:
 				return 0;
@@ -160,7 +167,7 @@ static int read_frame(void)
 
 		assert(i < n_buffers);
 
-		process_image((void *)buf.m.userptr, buf.bytesused);
+		process_image((void *)buf.m.userptr, buf.bytesused, buf);
 
 		if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
 			errno_exit("VIDIOC_QBUF");
@@ -175,6 +182,7 @@ void mainloop(void)
 	unsigned int count;
 
 	count = frame_count;
+    LOGV << "count = " << count;
 
 	while (count-- > 0) {
 		for (;;) {
@@ -201,6 +209,7 @@ void mainloop(void)
 				fprintf(stderr, "select timeout\n");
 				exit(EXIT_FAILURE);
 			}
+            LOGV << "ready to read_frame() count = " << count;
 
 			if (read_frame())
 				break;

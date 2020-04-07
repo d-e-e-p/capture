@@ -17,11 +17,12 @@ namespace common
             CameraConfigurator(ICameraList cameras);
             ~CameraConfigurator();
             ConfiguredCameras Configure();
+            ConfiguredCameras ConfigureOne();
+            void ConfigureControls(ConfiguredCamera &configuredCamera);
         private:
             ICameraList cameras;
             DebayeringControl debayeringControl;
             ResizeControl resizeControl;
-            void ConfigureControls(ConfiguredCamera &configuredCamera);
             void ConfigureControl(IControl *control, std::string camera);
             void ConfigureMenu(IControl *control, std::string camera);
             void ConfigureInteger(IControl *control, std::string camera);

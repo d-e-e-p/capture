@@ -21,6 +21,25 @@ CameraConfigurator::~CameraConfigurator()
 
 }
 
+ConfiguredCameras CameraConfigurator::ConfigureOne()
+{
+    ConfiguredCameras configuredCameras;
+    ICamera *camera = cameras[0];
+    configuredCameras.push_back(ConfiguredCamera {camera, true, {}});
+    ConfigureControls(configuredCameras[0]);
+
+    //std::transform(cameras.begin(), cameras.end(), std::back_inserter(configuredCameras),
+    //    [](ICamera *camera) { return ConfiguredCamera {camera, false, {}}; }
+    //);
+
+    //int32_t index;
+    //while (GetConfigurationMenuEntry(index)) {
+    //    ConfigureControls(configuredCameras[index]);
+    //}
+
+    return configuredCameras;
+}
+
 ConfiguredCameras CameraConfigurator::Configure()
 {
     ConfiguredCameras configuredCameras;

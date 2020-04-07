@@ -122,7 +122,6 @@ void runCaptureLoop(ICamera *camera) ;
 void generateGainExposureTable() ;
 void saveAndDisplayJpgDirect(ICamera *camera, IProcessedImage processedImage, string text, string basename) ;
 string exec(string cmd);
-void saveJpg(Imagedata image);
 void exifPrint(const Exiv2::ExifData exifData) ;
 void processArgs(int argc, char** argv) ;
 string getDateTimeOriginal() ;
@@ -136,13 +135,15 @@ void takeDummyPicsToMakeSettingsStick(void) ;
 void varyGain (void) ;
 void varyExposure (void) ;
 int varyBoth (void) ;
-void saveRaw(Imagedata image) ;
-void saveDng(Imagedata image) ;
+void saveRaw(Imagedata* image) ;
+void saveDng(Imagedata* image) ;
+void saveJpg(Imagedata* image);
 void cleanUp (void) ;
 void setupLoop(void);
 void endLoop(void);
-int endLoopCalback(void *ptr, int size);
+int endLoopCalback(void *ptr, int size, struct v4l2_buffer buf);
 void syncGainExpo(void);
+void callbackButton(int state, void *font);
 
 
 /*
@@ -274,15 +275,15 @@ void setupCamera() {
     fs::path file_camera_settings = fp.folder_base / "camera.settings";
     string command = "/usr/local/bin/v4l2-ctl --verbose --all > " + file_camera_settings.string();
     //system( (const char *) command.c_str());
+    LOGI << command;
     LOGI << exec(command);
 
-    // set default gain and exposure
-    setGain(opt.gain);
-    setExposure(opt.expo);
-
     if (opt.display) {
+        int trackbar;
         namedWindow(g.mainWindowName, CV_WINDOW_NORMAL);
         resizeWindow(g.mainWindowName, g.imagewidth, g.imageheight);
+        createButton("save image",callbackButton,NULL,QT_PUSH_BUTTON,1);
+        createTrackbar( "track1", g.mainWindowName, &trackbar, 255,  NULL);
     }
 
 
@@ -354,7 +355,7 @@ void SimplestCB(Mat& in, Mat& out, float percent) {
 }
 
 
-void performHotkeyActions(Imagedata image, int key) {
+void performHotkeyActions(Imagedata* image, int key) {
 
     LOGI << "key = " << key;
     switch (key) {
@@ -388,15 +389,14 @@ void performHotkeyActions(Imagedata image, int key) {
 
 }
 
-void showImage(Imagedata image) {
-    int size = image.height * image.width * 2;
-    Mat image_16bit(image.height, image.width, CV_16UC1);
-    memcpy(image_16bit.data, image.data, size);
+void showImage(Imagedata* image) {
+    Mat image_16bit(image->height, image->width, CV_16UC1);
+    memcpy(image_16bit.data, image->data, image->size);
     const int CONVERSION_SCALE = 1.0;
-    Mat image_bayer1(image.height, image.width, CV_16UC3);
+    Mat image_bayer1(image->height, image->width, CV_16UC3);
     demosaicing(image_16bit, image_bayer1, COLOR_BayerRG2RGB);
 
-    Mat image_colorcorr(image.height, image.width, CV_16UC3);
+    Mat image_colorcorr(image->height, image->width, CV_16UC3);
     //cv::xphoto::WhiteBalancer::balanceWhite(image_bayer1,image_colorcorr);
     //SimplestCB(image_bayer1,image_colorcorr,50);
 
@@ -404,8 +404,9 @@ void showImage(Imagedata image) {
     //minMaxLoc(image_colorcorr, &min, &max);
     //LOGV << "image_colorcorr (black,white) = " << Point(min,max);
     imshow(g.mainWindowName,image_bayer1);
-    displayOverlay(g.mainWindowName, image.text_north, 0);
-    displayStatusBar(g.mainWindowName, image.text_east, 0);
+	image->createAnnoText();
+    displayOverlay(g.mainWindowName, image->text_north, 0);
+    displayStatusBar(g.mainWindowName, image->text_east, 0);
 
     int key = cv::waitKey(1);
     if (key >= 0) {
@@ -417,10 +418,10 @@ void showImage(Imagedata image) {
 #include <sys/stat.h>
 #include <unistd.h>
 
-void process_image(void *ptr, int size) {
+void process_image(void *ptr, int size, struct v4l2_buffer buf) {
     //if (out_buf)
     //   fwrite(p, size, 1, stdout);
-    endLoopCalback(ptr,size);
+    endLoopCalback(ptr,size, buf);
     //fflush(stderr);
     //fprintf(stderr, ".");
     //fflush(stdout);
@@ -480,20 +481,23 @@ void startLoopCallback( void ) {
     return;
 }
 
-int endLoopCalback( void *ptr, int size ) {
+int endLoopCalback( void *ptr, int size, struct v4l2_buffer buf ) {
+    LOGV << "end loop with size = " << size;
     if (lp.num_of_dummy_pics > 0) {
         // skip advancing on this round
         return(0);
     }
 
    // actually store the image
-   Imagedata image;
-   image.size = size;
+   Imagedata *image = new Imagedata;
+   image->size = size;
+   image->height = 544;
+   image->width = image->size / ( image->height * image->bpp / CHAR_BIT);
    // TODO: do we really need memcpy?
-   image.data = new char [image.size];
-   memcpy(image.data,ptr,image.size);
+   image->data = new char [image->size];
+   memcpy(image->data,ptr,image->size);
 
-   if (image.data == nullptr) {
+   if (image->data == nullptr) {
        LOGE << "Unable to save frame, invalid image data" ;
        return(-1);
    }
@@ -525,21 +529,23 @@ int endLoopCalback( void *ptr, int size ) {
    string basename = buff;
 
    // update rest image attributes
-    image.src = "camera";
-    image.dst = fp.folder_raw / (basename + ".raw");
-    image.basename = basename;
-    image.datestamp= g.datestamp;
-    image.system_clock_ns=syst_timestamp_this;
-    image.steady_clock_ns=timestamp_this;
-    image.gain=opt.gain;
-    image.expo=opt.expo;
-    image.sweep_index=lp.sweep_index;
-    image.sweep_total=lp.sweep_total;
-    image.fps  = lp.fpsMeasurer.GetFps();
-    image.delta_ms=delta_ms;
-    image.comment=opt.comment;
-    image.command=g.command;
+    image->src = "camera";
+    image->dst = fp.folder_raw / (basename + ".raw");
+    image->basename = basename;
+    image->datestamp= g.datestamp;
+    image->system_clock_ns=syst_timestamp_this;
+    image->steady_clock_ns=timestamp_this;
+    image->gain=opt.gain;
+    image->expo=opt.expo;
+    image->sweep_index=lp.sweep_index;
+    image->sweep_total=lp.sweep_total;
+    image->fps  = lp.fpsMeasurer.GetFps();
+    image->delta_ms=delta_ms;
+    image->comment=opt.comment;
+    image->command=g.command;
 
+    //TODO also save from
+    // buf =   {index = 0, type = 1, bytesused = 835584, flags = 8193, field = 1, timestamp = {tv_sec = 255241, tv_usec = 840596}, timecode = {type = 0, flags = 0, frames = 0 '\000', seconds = 0 '\000', minutes = 0 '\000', hours = 0 '\000', userbits = "\000\000\000"}, sequence = 0, memory = 1, m = {offset = 0, userptr = 0, planes = 0x0, fd = 0}, length = 835584, reserved2 = 0, reserved = 0}
 
 
     swap( lp.stdy_time_last, lp.stdy_time_this ) ;
@@ -555,22 +561,13 @@ int endLoopCalback( void *ptr, int size ) {
        saveDng(image);
    } 
 
-   // save jpg
-   if (opt.alljpg) {
+   if (! opt.nojpg) {
        saveJpg(image);
-   } else {
-       if (! opt.nojpg) {
-           chrono::nanoseconds ns(1);
-           auto status = sd.job.wait_for(ns);
-           if (status == future_status::ready) {
-               saveDng(image);
-               sd.job = async(launch::async, saveJpg, image ) ;
-           } 
-       }
     }
 
+
    // all done with processing 
-   //free(image.data);
+   delete image;
 
 
    // ready to return...but first check if we should exist or wait instead
@@ -607,21 +604,48 @@ int endLoopCalback( void *ptr, int size ) {
 
 void endLoop(void) {
     // cleanup
-    LOGI << "\nSaved " << lp.num_frames << " frames to " << fp.folder_raw.string() << " folder with fps = " << lp.fpsMeasurer.GetFps() << flush;
-    LOGI << "session log :" << fp.file_log.string() << endl;
+    LOGI << "Saved " << lp.num_frames << " frames with fps = " << lp.fpsMeasurer.GetFps() ;
+    LOGI << "     raw dir: " << fp.folder_raw.string() ;
+    LOGI << "session log : " << fp.file_log.string() << endl;
 }
 
 
-void saveDng(Imagedata image) {
+void saveDng(Imagedata* image) {
 
-    fs::path file_dng = fp.folder_dng / (image.basename + ".dng");
-	image.writeDng(file_dng);
+    fs::path file_dng = fp.folder_dng / (image->basename + ".dng");
+	image->writeDng(file_dng);
 }
 
-void saveRaw(Imagedata image) {
+void saveRaw(Imagedata* image) {
 
-    fs::path file_raw = fp.folder_dng / (image.basename + ".raw");
-	image.writeRaw(file_raw);
+    fs::path file_raw = fp.folder_raw / (image->basename + ".raw");
+	image->writeRaw(file_raw);
+}
+
+// different from others because it might be threaded out so needs a 
+// private copy of imagedata
+void saveJpg(Imagedata* image) {
+
+    fs::path file_dng = fp.folder_dng / (image->basename + ".dng");
+    fs::path file_jpg = fp.folder_jpg / (image->basename + ".jpg");
+
+    image->createAnnoText();
+    image->src = file_dng;
+    image->dst = file_jpg;
+
+    // race condition possible ... dng should be written before jpg
+    // TODO: store in image if dng is written
+    if (! fs::exists(file_dng)) {
+        image->writeDng(file_dng);
+    }
+
+    // make a shallow copy for jpg and return...this could take a while
+    Imagedata imgobj = *image;
+    imgobj.data = nullptr; // TODO: constructor in class should handle this
+    imgobj.writeJpg(file_jpg);
+
+    // warning image object destroyed before writeJpg could complete...
+
 }
 
 void generateGainExposureTable() {
@@ -661,9 +685,9 @@ void saveAndDisplayJpgDirect(ICamera *camera, IProcessedImage processedImage, st
     const string datestamp  = getDateStamp();
 
     cv::UMat mImage;
-    uint32_t length = processedImage.length;
+    uint32_t length = processedimage->length;
     processor.AllocateMat(processedImage, mImage);
-    processor.DebayerImage(mImage,processedImage.pixelFormat);
+    processor.DebayerImage(mImage,processedimage->pixelFormat);
     processor.DrawText(mImage,text);
     sv::DeallocateProcessedImage(processedImage);
 
@@ -672,9 +696,9 @@ void saveAndDisplayJpgDirect(ICamera *camera, IProcessedImage processedImage, st
     Exiv2::ExifData exifData;
 
     // convert from 16 to 8 bit
-    if (mImage.depth() != CV_8U) {
+    if (mimage->depth() != CV_8U) {
         constexpr auto CONVERSION_SCALE_16_TO_8 = 0.00390625;
-        mImage.convertTo(mImage, CV_8U, CONVERSION_SCALE_16_TO_8);
+        mimage->convertTo(mImage, CV_8U, CONVERSION_SCALE_16_TO_8);
 
     }
     cv::imencode(".jpg",mImage, jpgbuf);
@@ -682,13 +706,13 @@ void saveAndDisplayJpgDirect(ICamera *camera, IProcessedImage processedImage, st
         saveRaw(&jpgbuf[0], jpgbuf.size(), filenameJpg);
     } else {
         Exiv2::Image::AutoPtr eImage = Exiv2::ImageFactory::open(&jpgbuf[0],jpgbuf.size());
-        exifData["Exif.Image.ProcessingSoftware"] = "capture.cpp";
-        exifData["Exif.Image.SubfileType"] = 1;
-        exifData["Exif.Image.ImageDescription"] = "snappy carrots";
-        exifData["Exif.Image.Model"] = "tensorfield ag";
-        exifData["Exif.Image.AnalogBalance"] = opt.gain;
-        exifData["Exif.Image.ExposureTime"] = opt.expo;
-        exifData["Exif.Image.DateTimeOriginal"] = datestamp;
+        exifData["Exif.image->ProcessingSoftware"] = "capture.cpp";
+        exifData["Exif.image->SubfileType"] = 1;
+        exifData["Exif.image->ImageDescription"] = "snappy carrots";
+        exifData["Exif.image->Model"] = "tensorfield ag";
+        exifData["Exif.image->AnalogBalance"] = opt.gain;
+        exifData["Exif.image->ExposureTime"] = opt.expo;
+        exifData["Exif.image->DateTimeOriginal"] = datestamp;
         eImage->setExifData(exifData);
         eImage->writeMetadata();
         if (opt.verbose) {
@@ -742,19 +766,6 @@ string exec(string cmd) {
                   [] (char a, char b) { return a == '\n' && b == '\n'; }),
               result.end());
     return result;
-}
-
-
-void saveJpg(Imagedata image) {
-
-    fs::path file_dng = fp.folder_dng / (image.basename + ".dng");
-    fs::path file_jpg = fp.folder_jpg / (image.basename + ".jpg");
-
-	image.createAnnoText();
-	image.src = file_dng;
-	image.writeAnnotated(file_jpg, true);
-
-    fs::copy(file_jpg, fp.file_current_jpg, fs::copy_options::overwrite_existing);
 }
 
 
@@ -1043,6 +1054,7 @@ void syncGainExpo(void) {
 
 // modulo gain if asked value greater than max !
 void setGain (int value) {
+    LOGV << " setting gain to: " << value ;
 
     struct v4l2_query_ext_ctrl qctrl = query_gain();
     int minValue = qctrl.minimum;
@@ -1090,6 +1102,7 @@ void setGain (int value) {
 
 // modulo exposure if asked value greater than max !
 void setExposure (int value) {
+    LOGV << " setting expo to: " << value ;
 
     struct v4l2_query_ext_ctrl qctrl = query_expo();
     int minValue = qctrl.minimum;
@@ -1193,9 +1206,15 @@ void cleanUp () {
     // clean up...
     LOGV << " final cleanup.." << endl << flush;;
     destroyAllWindows();
+    MagickCoreTerminus();
+
     sd.job.wait();
     for (auto& th : sd.threads) {
         th.join();
     }
+}
+
+void callbackButton(int state, void *font) {
+    LOGV << "state = " << state;
 }
 
