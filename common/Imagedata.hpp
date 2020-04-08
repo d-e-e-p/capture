@@ -44,6 +44,7 @@ namespace fs=std::experimental::filesystem;
 
 using json = nlohmann::json;
 using namespace std;
+using namespace cv;
 
 class Imagedata{
  public:
@@ -65,10 +66,13 @@ class Imagedata{
     float fps;
     float delta_ms;
 
-    int bpp    = 16;
     int width  = 728;
     int height = 544;
-    int size   = width * height * bpp / CHAR_BIT;
+
+    int bpp    = 16; // bits per pixel
+    int pixel_depth = bpp / CHAR_BIT;
+    int line_width  = width * pixel_depth;
+    int datalength  = line_width * height;
 
     string comment;
     string text_north;
@@ -108,7 +112,7 @@ class Imagedata{
         bpp  =              jin["bpp"];
         width  =            jin["width"];
         height  =           jin["height"];
-        size  =             jin["size"];
+        datalength  =       jin["datalength"];
         comment =           jin["comment"];
         text_north =        jin["text_north"];
         text_east =         jin["text_east"];
@@ -135,7 +139,7 @@ class Imagedata{
         bpp = 16;
         width = 728;
         height = 544;
-        size = 835584;
+        datalength = 835584;
 
         comment="run with lower camera";
         text_north= "";
@@ -175,7 +179,7 @@ class Imagedata{
         jout["bpp"]=                bpp ;
         jout["width"]=              width ;
         jout["height"]=             height ;
-        jout["size"]=               size ;
+        jout["datalength"]=         datalength ;
         jout["comment"]=            comment;
         jout["text_north"]=         text_north;
         jout["text_east"]=          text_east;
@@ -188,15 +192,17 @@ class Imagedata{
         src = filename;
 
         // get data in
-        size = fs::file_size(filename);
+        int filesize = fs::file_size(filename);
         // make sure size matches width * height * bpp / CHAR_BIT
-        data = new char [size];
+        data = new char [filesize];
         ifstream fin (filename, ios::in|ios::binary);
-        fin.read (data, size);
+        fin.read (data, filesize);
         fin.close();
 
-        width = size / ( height * bpp / CHAR_BIT);
-        //LOGV << "loaded " << src << " size:" << size
+         // update width to reflect new filesize
+         datalength = filesize;
+         width = datalength / ( height * pixel_depth );
+        //LOGV << "loaded " << src << " filesize:" << filesize
         //    << " = w:" << width << " * h:" << height << " * bpp:" << bpp << " / CHAR_BIT:" << CHAR_BIT;
     }
 
@@ -210,11 +216,11 @@ class Imagedata{
             return;
         }
 
-        int writenBytes = write(fd, data, size);
+        int writenBytes = write(fd, data, datalength);
         if (writenBytes < 0) {
             LOGE << "Error writing to file " << filename.string() ;
-        } else if ( (uint32_t) writenBytes != size) {
-            LOGE << "Error: " << writenBytes << " out of " << size << " were written to file " << filename.string() ;
+        } else if ( (uint32_t) writenBytes != datalength) {
+            LOGE << "Error: " << writenBytes << " out of " << datalength << " were written to file " << filename.string() ;
         }
 
         close(fd);
@@ -379,33 +385,16 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         //LOGV << "mod_headerdata = " << mod_headerdata; 
 
         //reshape the size of data to get rid of band if needed ... assume width = 768 or 728
-        int old_line_width = 768 * bpp / CHAR_BIT;
-        int new_line_width = 728 * bpp / CHAR_BIT;
-        height = 544;
-
-
-        LOGV << "old_line_width = " << old_line_width << " new_line_width = " << new_line_width; 
-        int olddatalength = old_line_width * height;
-        int newdatalength = new_line_width * height;
-
-        vector<char> indata (data, data + olddatalength); // fill vec with data
-        vector<char> outdata(data, data + newdatalength);
-        for (int x = 0; x < old_line_width ; x++) {
-            for (int y=0;y < height ; y++) {
-                if (x < new_line_width) {
-                    int old_pixel = x + y * old_line_width;
-                    int new_pixel = x + y * new_line_width;
-                    outdata.at(new_pixel) = indata.at(old_pixel);
-                }
-            }
-        }
+        char* cropdata = crop_opencv(data);
 
         LOGV << "writing to : " << dngname.string() ;
         //fs::remove(dngname);
         ofstream outfile (dngname,ofstream::binary);
         outfile.write (reinterpret_cast<const char*>(&mod_headerdata[0]), dng_headerlength);
-        outfile.write (reinterpret_cast<const char*>(&outdata[0]), newdatalength);
+        outfile.write (cropdata, datalength);
         outfile.close();
+
+        delete cropdata;
 
     }
 
@@ -493,6 +482,80 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 
         return string(start, end + 1);
     }
+
+    char* crop_opencv(char* indata) {
+        //int bpp = 16;
+        //int height = 544;
+        //int pixel_depth = bpp / CHAR_BIT;
+         
+          
+        int old_width = 768; // or take from current width var?
+        int old_line_width = old_width * pixel_depth;
+        int old_datalength = old_line_width * height;
+
+        int new_width = 728;
+        int new_line_width = new_width * pixel_depth;
+        int new_datalength = new_line_width * height;
+
+
+        Mat in (height, old_width, CV_16UC1);
+        Mat out(height, new_width, CV_16UC1);
+
+        LOGV << "in = "  << in.size()  ;
+        LOGV << "out = " << out.size() ;
+
+        memcpy(in.data, indata, old_datalength);
+
+        Rect roi = Rect(0,0, new_width, height);
+        Mat crop = in(roi);
+        LOGV << "crop = " << crop.size() << " cont = " << crop.isContinuous() ;
+
+        crop.copyTo(out);
+        LOGV << "copy = " << out.size() << " cont = " << out.isContinuous() ;
+
+        //update globals
+        width = new_width;
+        line_width = new_line_width;
+        datalength = new_datalength;
+
+        char* res = new char [new_datalength];
+        memcpy(res, out.data, new_datalength);
+        return res;
+
+      }
+
+     char* crop_direct(char* old_data) {
+      // reduce from 768*2 = 1536 bytes per line to 728*2 = 1456
+      // throwing away away excess stride
+         //reshape the size of data to get rid of band if needed ... assume width = 768 or 728
+
+        int old_width = 768; // or take from current width var?
+        int old_line_width = old_width * pixel_depth;
+        int old_datalength = old_line_width * height;
+
+        int new_width = 728;
+        int new_line_width = new_width * pixel_depth;
+        int new_datalength = new_line_width * height;
+
+          vector<char> indata (old_data, old_data + old_datalength); // fill vec with data
+          vector<char> outdata(old_data, old_data + new_datalength);
+          for (int x = 0; x < old_line_width ; x++) {
+              for (int y=0;y < height ; y++) {
+                  if (x < new_line_width) {
+                      int old_pixel = x + y * old_line_width;
+                      int new_pixel = x + y * new_line_width;
+                      outdata.at(new_pixel) = indata.at(old_pixel);
+                  }
+              }
+          }
+
+          char* res = new char [new_datalength];
+          memcpy(res, &outdata[0], new_datalength);
+          return res;
+
+      }
+
+
 
 
 }; /* end Class */

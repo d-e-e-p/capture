@@ -36,7 +36,7 @@
 
 //exif
 #include <exiv2/exiv2.hpp>
-#include "ExifTool.h"
+#include "exif/ExifTool.h"
 
 //std
 #include <algorithm>
