@@ -82,16 +82,23 @@ struct FilePaths {
 
 } fp;
 
+// fps smoothing accumulator
+namespace ba = boost::accumulators;
+namespace bt = ba::tag;
+typedef ba::accumulator_set < float, ba::stats <bt::rolling_mean > > MeanAccumulator;
+MeanAccumulator fps_mean_accumulator(bt::rolling_window::window_size = 25);
+
+
 // using in callback in loop
 struct Loop {
     int num_of_dummy_pics = 0;
     int num_frames = 0; // index for frame count
     int frameSaved = 0;
     int maxIntegerWidth;
-    common::FpsMeasurer fpsMeasurer;
     int sweep_index = 0;
     int sweep_total = 0;
     int duration_between_saves_ms = 0;
+    float fps = 0;
 
     chrono::system_clock::time_point syst_time_prog = chrono::system_clock::now();
     chrono::system_clock::time_point syst_time_last  = syst_time_prog;
@@ -99,6 +106,7 @@ struct Loop {
     // use std::chrono::high_resolution_clock::time_point 
     chrono::steady_clock::time_point stdy_time_last = chrono::steady_clock::now();
     chrono::steady_clock::time_point stdy_time_this = stdy_time_last;
+
 
 } lp;
 
@@ -265,6 +273,14 @@ void setupDirs() {
 
 }
 
+void tbCallbackGain(int value,void* userdata) {
+    setGain(value);
+} 
+
+void tbCallbackExpo(int value,void* userdata) {
+    setExposure(value);
+} 
+
 void setupCamera() {
 
     // set default gain and exposure
@@ -279,11 +295,12 @@ void setupCamera() {
     LOGI << exec(command);
 
     if (opt.display) {
-        int trackbar;
         namedWindow(g.mainWindowName, CV_WINDOW_NORMAL);
         resizeWindow(g.mainWindowName, g.imagewidth, g.imageheight);
         createButton("save image",callbackButton,NULL,QT_PUSH_BUTTON,1);
-        createTrackbar( "track1", g.mainWindowName, &trackbar, 255,  NULL);
+        //int cvCreateTrackbar(const char* trackbar_name, const char* window_name, int* value, int count, CvTrackbarCallback on_change=NULL )¶
+        createTrackbar( "gain", g.mainWindowName, &opt.gain, 480,   tbCallbackGain);
+        createTrackbar( "expo", g.mainWindowName, &opt.expo, 8256,  tbCallbackExpo);
     }
 
 
@@ -391,7 +408,7 @@ void performHotkeyActions(Imagedata* image, int key) {
 
 void showImage(Imagedata* image) {
     Mat image_16bit(image->height, image->width, CV_16UC1);
-    memcpy(image_16bit.data, image->data, image->size);
+    memcpy(image_16bit.data, image->data, image->datalength);
     const int CONVERSION_SCALE = 1.0;
     Mat image_bayer1(image->height, image->width, CV_16UC3);
     demosaicing(image_16bit, image_bayer1, COLOR_BayerRG2RGB);
@@ -481,8 +498,7 @@ void startLoopCallback( void ) {
     return;
 }
 
-int endLoopCalback( void *ptr, int size, struct v4l2_buffer buf ) {
-    LOGV << "end loop with size = " << size;
+int endLoopCalback( void *ptr, int datalength, struct v4l2_buffer buf ) {
     if (lp.num_of_dummy_pics > 0) {
         // skip advancing on this round
         return(0);
@@ -490,12 +506,12 @@ int endLoopCalback( void *ptr, int size, struct v4l2_buffer buf ) {
 
    // actually store the image
    Imagedata *image = new Imagedata;
-   image->size = size;
+   image->datalength = datalength;
    image->height = 544;
-   image->width = image->size / ( image->height * image->bpp / CHAR_BIT);
+   image->width = image->datalength / ( image->height * image->pixel_depth);
    // TODO: do we really need memcpy?
-   image->data = new char [image->size];
-   memcpy(image->data,ptr,image->size);
+   image->data = new char [image->datalength];
+   memcpy(image->data,ptr,image->datalength);
 
    if (image->data == nullptr) {
        LOGE << "Unable to save frame, invalid image data" ;
@@ -505,8 +521,6 @@ int endLoopCalback( void *ptr, int size, struct v4l2_buffer buf ) {
    //string num = to_string(lp.num_frames++);
    //num.insert(num.begin(), lp.maxIntegerWidth - num.length(), '0');
    //string basename     = "frame" + num ;
-
-   lp.fpsMeasurer.FrameReceived();
 
    lp.syst_time_this  = chrono::system_clock::now();
    lp.stdy_time_this =  chrono::steady_clock::now();
@@ -518,6 +532,8 @@ int endLoopCalback( void *ptr, int size, struct v4l2_buffer buf ) {
    long timestamp_this = lp.stdy_time_this.time_since_epoch().count();
    //LOGV << " dt = " << timestamp_this << " - " << timestamp_last << " = " << delta_ms << "ms" ;
    long syst_timestamp_this = lp.syst_time_this.time_since_epoch().count();
+   fps_mean_accumulator(1000/delta_ms);
+   lp.fps = boost::accumulators::rolling_mean(fps_mean_accumulator);
 
 
    char buff[BUFSIZ];
@@ -539,7 +555,7 @@ int endLoopCalback( void *ptr, int size, struct v4l2_buffer buf ) {
     image->expo=opt.expo;
     image->sweep_index=lp.sweep_index;
     image->sweep_total=lp.sweep_total;
-    image->fps  = lp.fpsMeasurer.GetFps();
+    image->fps=lp.fps;
     image->delta_ms=delta_ms;
     image->comment=opt.comment;
     image->command=g.command;
@@ -604,7 +620,7 @@ int endLoopCalback( void *ptr, int size, struct v4l2_buffer buf ) {
 
 void endLoop(void) {
     // cleanup
-    LOGI << "Saved " << lp.num_frames << " frames with fps = " << lp.fpsMeasurer.GetFps() ;
+    LOGI << "Saved " << lp.num_frames << " frames at " << fixed << setprecision(0) << lp.fps << " fps" ;
     LOGI << "     raw dir: " << fp.folder_raw.string() ;
     LOGI << "session log : " << fp.file_log.string() << endl;
 }

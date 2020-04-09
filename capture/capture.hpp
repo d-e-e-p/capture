@@ -55,6 +55,13 @@ namespace fs=std::experimental::filesystem;
 #include <thread>
 #include <chrono>
 
+// for rolling mean
+#include <boost/accumulators/accumulators.hpp>
+#include <boost/accumulators/statistics/stats.hpp>
+#include <boost/accumulators/statistics/rolling_mean.hpp>
+
+
+
 // use plog instead
 //#define LOG(msg) std::cout << msg << std::endl
 //#define ERR(msg) std::cerr << msg << std::endl
