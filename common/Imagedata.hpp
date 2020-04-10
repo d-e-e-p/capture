@@ -251,12 +251,22 @@ class Imagedata{
 
     }
 
+    // launch and return
+    void writeJpgDirect(fs::path file_dest) {
+
+        dst = file_dest;
+        //string command = "rawtherapee-cli -Y -o " +  dst + " -q -c " +  src;
+        string command = "darktable-cli " + src +  " ~/build/tensorfield/snappy/bin/darktable.xml  " + dst;
+        runThreadedCommand(command);
+    }
+
 
     // launch and return
     void writeJpg(fs::path file_dest) {
 
         dst = file_dest;
-        string command = "rawtherapee-cli -Y -o " +  dst + " -q -c " +  src;
+        //string command = "rawtherapee-cli -Y -o " +  dst + " -q -c " +  src;
+        string command = "darktable-cli --bpp 8 " + src +  " ~/build/tensorfield/snappy/bin/darktable.xml  " + dst;
         chrono::nanoseconds ns(1);
         auto status = job_queue.wait_for(ns);
         if (status == future_status::ready) {
@@ -302,9 +312,9 @@ class Imagedata{
         int argc = (int)cstrings.size();
         char** argv = cstrings.data();
 
-        LOGV << "cmd = " << cmd;
-        copy( argv, argv+argc, ostream_iterator<const char*>( cout, " " ) ) ;
-        cout << "\n";
+        //LOGV << "cmd = " << cmd;
+        //copy( argv, argv+argc, ostream_iterator<const char*>( cout, " " ) ) ;
+        //cout << "\n";
 
         (void) MagickImageCommand(image_info, argc, argv, NULL, exception);
         LOGV << "cmd DONE= " << cmd;
@@ -403,7 +413,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     // backward flip to init static class in c++11
     static class ClassInit{
       public:
-            ClassInit(fs::path headerfile) {
+            ClassInit(fs::path headerfile, fs::path stylefile) {
                 dng_headerlength = fs::file_size(headerfile);
                 cout << " reading dng header : " << headerfile << " size = " << dng_headerlength << endl ;
                 dng_headerdata = new char [dng_headerlength];
@@ -411,7 +421,9 @@ int writeAnnotated(Imagedata image, fs::path dst) {
                 fhead.read (dng_headerdata, dng_headerlength);
                 fhead.close();
 
-                dng_attribute_start = 5310;
+                //dng_attribute_start = 5310; // for Ximea-MC031CG-SY-FV-StdA-D65.dcp
+                dng_attribute_start = 5154; // for Snappy-Xrite
+
 
                 // init exiftool interface
                 exiftool = new ExifTool();
@@ -421,6 +433,8 @@ int writeAnnotated(Imagedata image, fs::path dst) {
                 MagickCoreGenesis(NULL,MagickFalse);
 
                 job_queue = async(launch::async, []{ });
+
+                dt_stylefile = stylefile;
 
             }
 
@@ -436,6 +450,8 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     static char*  dng_headerdata;
     static int    dng_headerlength;
     static int    dng_attribute_start;
+
+    static string dt_stylefile;
 
     // for exif
     static ExifTool *exiftool;
@@ -565,6 +581,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 int Imagedata::dng_headerlength = 0;
 int Imagedata::dng_attribute_start = 0;
 char* Imagedata::dng_headerdata = nullptr;
+string Imagedata::dt_stylefile = "";
 ExifTool *Imagedata::exiftool = nullptr;
 future <void> Imagedata::job_queue ;
 

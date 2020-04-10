@@ -26,7 +26,7 @@ all: ../bin/postprocess
 watch:
 	while true; do \
 		make all; \
-		inotifywait -e close_write,move_self postprocess.cpp postprocess.hpp Imagedata.hpp; \
+		inotifywait -e close_write,move_self postprocess.cpp postprocess.hpp ../common/Imagedata.hpp; \
 	done
 
 

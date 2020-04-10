@@ -17,6 +17,11 @@ using namespace std;
 
 //opencv
 #include <opencv2/highgui.hpp>
+#include "opencv2/opencv_modules.hpp"
+#include <opencv2/core/utility.hpp>
+#include "opencv2/imgcodecs.hpp"
+#include "opencv2/imgproc.hpp"
+#include "opencv2/xphoto.hpp"
 using namespace cv;
 
 // plog

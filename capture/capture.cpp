@@ -60,12 +60,15 @@ struct Globals {
     int imageheight = 544;
     bool toggle_f = false;
 
+    Mat ccm;
+
 } g;
 
 struct FilePaths {
 
     //dng header
-    fs::path headerfile = "/home/deep/build/snappy/bin/dng_header.bin";
+    fs::path headerfile   = "/home/deep/build/snappy/bin/dng_header.bin";
+    fs::path dt_stylefile = "/home/deep/build/snappy/bin/darktable.xml";
 
     //misc file locations
     fs::path folder_data ; // relative to exe ../bin/capture => ../data/images
@@ -119,7 +122,8 @@ struct shutDown {
 
 
 // init Imagedata class
-Imagedata::ClassInit Imagedata::readDngHeaderData(fp.headerfile);
+Imagedata::ClassInit Imagedata::readDngHeaderData(fp.headerfile, fp.dt_stylefile);
+
 
 
 // protos...i prefer having them here over instead of way over in .hpp
@@ -151,7 +155,9 @@ void setupLoop(void);
 void endLoop(void);
 int endLoopCalback(void *ptr, int size, struct v4l2_buffer buf);
 void syncGainExpo(void);
-void callbackButton(int state, void *font);
+void buttonCallback(int state, void *font);
+void setupCapture();
+void stopCapture();
 
 
 /*
@@ -169,24 +175,30 @@ int main(int argc, char **argv) {
 
     setupDirs();
     processArgs(argc, argv);
-    setupLoop();
-    open_device(); 
-     init_device(); 
-        setupCamera();
-        start_capturing();
+    setupCapture();
 
-         frame_count = opt.frames;
-         mainloop();
+        frame_count = opt.frames;
+        mainloop();
 
-       stop_capturing(); 
-     uninit_device(); 
-    close_device();
-    endLoop();
-    cleanUp();
-
+    stopCapture();
     return 0;
 }
 
+void setupCapture() { 
+    setupLoop();
+    open_device(); 
+    init_device(); 
+    setupCamera();
+    start_capturing();
+}
+
+void stopCapture() { 
+    stop_capturing(); 
+    uninit_device(); 
+    close_device();
+    endLoop();
+    cleanUp();
+}
 
 void PrintHelp() {
     LOGI <<
@@ -281,6 +293,66 @@ void tbCallbackExpo(int value,void* userdata) {
     setExposure(value);
 } 
 
+void buttonCallback(int state, void *font) {
+    LOGV << "state = " << state;
+}
+
+// need to handle RGB->BGR which is used by opencv
+void defineColorCorrectionMatrix() {
+
+   /* final color matrix
+     *   Blue:BGR
+     *  Green:BGR;
+     *    Red:BGR;
+     */
+
+/*
+    <Element Row="2" Col="2">0.412400</Element>
+    <Element Row="2" Col="1">0.056000</Element>
+    <Element Row="2" Col="0">0.062000</Element>
+    <Element Row="1" Col="2">0.274300</Element>
+    <Element Row="1" Col="1">0.700600</Element>
+    <Element Row="1" Col="0">0.075800</Element>
+    <Element Row="0" Col="2">0.018000</Element>
+    <Element Row="0" Col="1">-0.583300</Element>
+    <Element Row="0" Col="0">1.133600</Element>
+*/
+
+    float rgb[3][3];
+    rgb[2][2] =  0.4124;
+    rgb[2][1] =  0.0560;
+    rgb[2][0] =  0.0620;
+    rgb[1][2] =  0.2743;
+    rgb[1][1] =  0.7006;
+    rgb[1][0] =  0.0758;
+    rgb[0][2] =  0.0180;
+    rgb[0][1] = -0.5833;
+    rgb[0][0] =  1.1336;
+
+    float bgr[3][3];
+    bgr[0][0] = rgb[2][2];
+    bgr[0][1] = rgb[2][1];
+    bgr[0][2] = rgb[2][0];
+    bgr[1][0] = rgb[1][3];
+    bgr[1][1] = rgb[1][1];
+    bgr[1][2] = rgb[1][0];
+    bgr[2][0] = rgb[0][2];
+    bgr[2][1] = rgb[0][1];
+    bgr[2][2] = rgb[0][0];
+
+    g.ccm = Mat(3, 3, CV_32FC1, rgb).t();
+
+    LOGV << "RGB color correction matrix :";
+    for (int i = 0; i < 3; i++) {
+       for (int j = 0; j < 3; j++) {
+          LOGV << rgb[i][j] << "\t";
+       }
+       // Newline for new row
+       LOGV << "\t";
+    }
+
+}
+
 void setupCamera() {
 
     // set default gain and exposure
@@ -295,86 +367,22 @@ void setupCamera() {
     LOGI << exec(command);
 
     if (opt.display) {
-        namedWindow(g.mainWindowName, CV_WINDOW_NORMAL);
+        defineColorCorrectionMatrix();
+        namedWindow(g.mainWindowName, WINDOW_NORMAL);
         resizeWindow(g.mainWindowName, g.imagewidth, g.imageheight);
-        createButton("save image",callbackButton,NULL,QT_PUSH_BUTTON,1);
+        createButton("save image",buttonCallback,NULL,QT_PUSH_BUTTON,1);
         //int cvCreateTrackbar(const char* trackbar_name, const char* window_name, int* value, int count, CvTrackbarCallback on_change=NULL )¶
         createTrackbar( "gain", g.mainWindowName, &opt.gain, 480,   tbCallbackGain);
         createTrackbar( "expo", g.mainWindowName, &opt.expo, 8256,  tbCallbackExpo);
     }
 
-
-    //TODO
-    //camera->GetControl(SV_V4L2_BLACK_LEVEL)->Set(0);
-    //camera->GetControl(SV_V4L2_FRAMESIZE)->Set(0);
-
-    // set min/max levels
-    //setMinMaxGain(camera);
-    //setMinMaxExposure(camera);
-
-    // assume defaults
-    //common::SelectPixelFormat(control); 
-    //common::SelectFrameSize(camera->GetControl(SV_V4L2_FRAMESIZE), camera->GetControl(SV_V4L2_FRAMEINTERVAL));
-    //common::SelectFrameSize(camera->GetControl(SV_V4L2_FRAMESIZE), camera->GetControl(SV_V4L2_FRAMEINTERVAL));
-
-    // dump settings
-    /*
-    IControlList controls = camera->GetControlList();
-    for (IControl *control : controls) {
-        string name  = string(control->GetName());
-        string value = getCurrentControlValue(control);
-        string id    = to_string(control->GetID());
-        if (opt.verbose) {
-            LOGV << "Control: " << name << " = " << value << " : id = " << id ;
-        } else {
-            LOGI << "Control: " << name << " = " << value ;
-        }
-    }
-
-
-    if (!camera->StartStream()) {
-        LOGE << "Failed to start stream!" ;
-        exit(-1);
-    }
-
-    return camera;
-    */
     return;
 
-}
-
-// src : https://gist.github.com/royshil/1449e22993e98414e9eb#file-simplestcolorbalance-cpp
-//
-/// perform the Simplest Color Balancing algorithm
-void SimplestCB(Mat& in, Mat& out, float percent) {
-    assert(in.channels() == 3);
-    assert(percent > 0 && percent < 100);
-
-    float half_percent = percent / 200.0f;
-
-    vector<Mat> tmpsplit; split(in,tmpsplit);
-    for(int i=0;i<3;i++) {
-        //find the low and high precentile values (based on the input percentile)
-        Mat flat; tmpsplit[i].reshape(1,1).copyTo(flat);
-        cv::sort(flat,flat,CV_SORT_EVERY_ROW + CV_SORT_ASCENDING);
-        int lowval = flat.at<uchar>(cvFloor(((float)flat.cols) * half_percent));
-        int highval = flat.at<uchar>(cvCeil(((float)flat.cols) * (1.0 - half_percent)));
-        //cout << lowval << " " << highval << endl;
-
-        //saturate below the low percentile and above the high percentile
-        tmpsplit[i].setTo(lowval,tmpsplit[i] < lowval);
-        tmpsplit[i].setTo(highval,tmpsplit[i] > highval);
-
-        //scale the channel
-        normalize(tmpsplit[i],tmpsplit[i],0,255,NORM_MINMAX);
-    }
-    merge(tmpsplit,out);
 }
 
 
 void performHotkeyActions(Imagedata* image, int key) {
 
-    LOGI << "key = " << key;
     switch (key) {
         case 'f' : 
             g.toggle_f = ! g.toggle_f;
@@ -386,24 +394,61 @@ void performHotkeyActions(Imagedata* image, int key) {
             }
             break;
         case 's' : 
-            LOGI << "saving";
+            LOGI << "saving " << image->basename;
             saveRaw(image) ;
             saveDng(image) ;
             saveJpg(image) ;
             break;
         case 'q' : 
             LOGI << "quitting.";
-            stop_capturing();
-            uninit_device();
-            close_device();
-            endLoop();
-            cleanUp();
+            stopCapture();
             exit(0);
-            break;
+            break; // never get here
         default :
             LOGI << "unknown key " << key;
     }
 
+}
+
+
+
+void showImageCorrected(Imagedata* image) {
+
+    Mat image_16bit(image->height, image->width, CV_16UC1);
+    memcpy(image_16bit.data, image->data, image->datalength);
+    Mat image_bayer1(image->height, image->width, CV_16UC3);
+    demosaicing(image_16bit, image_bayer1, COLOR_BayerRG2RGB);
+
+    Mat bayer1_float = Mat(image->height, image->width, CV_32FC3);
+    double min, max;
+    minMaxLoc(image_bayer1, &min, &max);
+    LOGV << "image_bayerl (min,max) = " << Point(min,max) <<  std::endl;
+    image_bayer1.convertTo(bayer1_float, CV_32FC3, 1.0 / max);
+
+    Mat bayer1_float_linear = bayer1_float.reshape(1, image->height*image->width);
+    Mat color_matrixed_linear = bayer1_float_linear * g.ccm;
+    Mat final_color_matrixed = color_matrixed_linear.reshape(3, image->height); // or should be reshape (height, width, CV_32FC3);
+    LOGV << "final_color_matrixed size = " << final_color_matrixed.size() << std::endl;
+    final_color_matrixed.convertTo(final_color_matrixed, CV_32FC3, 256);
+
+    Ptr<xphoto::WhiteBalancer> wb;
+    wb = xphoto::createGrayworldWB();
+    Mat image_wb;
+    wb->balanceWhite(final_color_matrixed, image_wb);
+
+
+    minMaxLoc(image_wb, &min, &max);
+    LOGV << "image_wb (black,white) = " << Point(min,max);
+    imshow(g.mainWindowName,image_wb);
+	image->createAnnoText();
+    string text_status = image->text_east + "    hotkeys: (s) save   (f) resize   (q) quit ";
+    displayOverlay(g.mainWindowName, image->text_north, 0);
+    displayStatusBar(g.mainWindowName, text_status, 0);
+
+    int key = cv::waitKey(1);
+    if (key >= 0) {
+        performHotkeyActions(image, key);
+    }
 }
 
 void showImage(Imagedata* image) {
@@ -422,8 +467,9 @@ void showImage(Imagedata* image) {
     //LOGV << "image_colorcorr (black,white) = " << Point(min,max);
     imshow(g.mainWindowName,image_bayer1);
 	image->createAnnoText();
+    string text_status = image->text_east + "    hotkeys: (s) save   (f) resize   (q) quit ";
     displayOverlay(g.mainWindowName, image->text_north, 0);
-    displayStatusBar(g.mainWindowName, image->text_east, 0);
+    displayStatusBar(g.mainWindowName, text_status, 0);
 
     int key = cv::waitKey(1);
     if (key >= 0) {
@@ -690,83 +736,9 @@ void generateGainExposureTable() {
 
 }
 
-/*
-
-// run in separate thread
-// TODO: setup workers to handle this in background without wasting time every
-// loop allocating and releasing all this overhead memory
-void saveAndDisplayJpgDirect(ICamera *camera, IProcessedImage processedImage, string text, string basename) {
-    common::ImageProcessor processor;
-    // TODO: use image attribute date instead
-    const string datestamp  = getDateStamp();
-
-    cv::UMat mImage;
-    uint32_t length = processedimage->length;
-    processor.AllocateMat(processedImage, mImage);
-    processor.DebayerImage(mImage,processedimage->pixelFormat);
-    processor.DrawText(mImage,text);
-    sv::DeallocateProcessedImage(processedImage);
-
-    string filenameJpg = basename + ".jpg";
-    vector<uchar> jpgbuf;
-    Exiv2::ExifData exifData;
-
-    // convert from 16 to 8 bit
-    if (mimage->depth() != CV_8U) {
-        constexpr auto CONVERSION_SCALE_16_TO_8 = 0.00390625;
-        mimage->convertTo(mImage, CV_8U, CONVERSION_SCALE_16_TO_8);
-
-    }
-    cv::imencode(".jpg",mImage, jpgbuf);
-    if (opt.noexif) {
-        saveRaw(&jpgbuf[0], jpgbuf.size(), filenameJpg);
-    } else {
-        Exiv2::Image::AutoPtr eImage = Exiv2::ImageFactory::open(&jpgbuf[0],jpgbuf.size());
-        exifData["Exif.image->ProcessingSoftware"] = "capture.cpp";
-        exifData["Exif.image->SubfileType"] = 1;
-        exifData["Exif.image->ImageDescription"] = "snappy carrots";
-        exifData["Exif.image->Model"] = "tensorfield ag";
-        exifData["Exif.image->AnalogBalance"] = opt.gain;
-        exifData["Exif.image->ExposureTime"] = opt.expo;
-        exifData["Exif.image->DateTimeOriginal"] = datestamp;
-        eImage->setExifData(exifData);
-        eImage->writeMetadata();
-        if (opt.verbose) {
-            Exiv2::ExifData &ed2 = eImage->exifData();
-            exifPrint(ed2);
-        }
-
-        if (! opt.nosave) {
-            string outJpg = folderJpg + filenameJpg;
-            Exiv2::FileIo file(outJpg);
-            file.open("wb");
-            file.write(eImage->io()); 
-            file.close();
-
-            const string curJpg = "/home/deep/build/snappy/capture/current.jpg";
-            ifstream src(outJpg, ios::binary);
-            ofstream dst(curJpg, ios::binary);
-            dst << src.rdbuf();
-        }
-
-    }
-
-    //cv::Mat dst = cv::imdecode(jpgbuf,1);
-    //cv::imshow("dst", dst);
-    if (opt.verbose) {
-        cout << ". " << folderJpg << filenameJpg << endl << flush;
-    }
-    cv::namedWindow("capture", cv::WINDOW_OPENGL | cv::WINDOW_AUTOSIZE);
-    cv::imshow("capture", mImage);
-    cv::waitKey(1);
-}
-*/
-
 
 // https://stackoverflow.com/questions/478898/how-do-i-execute-a-command-and-get-the-output-of-the-command-within-c-using-po
 string exec(string cmd) {
-
-
     array<char, 128> buffer;
     string result;
     unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
@@ -802,8 +774,6 @@ void exifPrint(const Exiv2::ExifData exifData) {
                   << "\n";
     }
 }
-
-
 
 
 void processArgs(int argc, char** argv) {
@@ -1228,9 +1198,5 @@ void cleanUp () {
     for (auto& th : sd.threads) {
         th.join();
     }
-}
-
-void callbackButton(int state, void *font) {
-    LOGV << "state = " << state;
 }
 

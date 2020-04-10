@@ -19,6 +19,7 @@ struct Options {
     string convert = "raw2dng";
     bool overwrite = false;
     bool verbose = false;
+    bool sample = false;
     int  threads = 4;
 } opt;
 
@@ -39,12 +40,13 @@ struct FilePaths {
     vector <fs::path> folder_src_list ;
 
     //dng header
-    fs::path headerfile = "/home/user/build/tensorfield/snappy/bin/dng_header.bin";
+    fs::path headerfile   = "/home/user/build/tensorfield/snappy/bin/dng_header.bin";
+    fs::path dt_stylefile = "/home/user/build/tensorfield/snappy/bin/darktable.xml";
 
 } fp;
 
 // init Imagedata class
-Imagedata::ClassInit Imagedata::readDngHeaderData(fp.headerfile);
+Imagedata::ClassInit Imagedata::readDngHeaderData(fp.headerfile, fp.dt_stylefile);
 
 
 void processArgs(int argc, char** argv) {
@@ -55,6 +57,7 @@ void processArgs(int argc, char** argv) {
         {"convert",     required_argument,  0, 42 },
         {"overwrite",   no_argument,        0, 43 },
         {"verbose",     no_argument,        0, 44 },
+        {"sample",      no_argument,        0, 45 },
         {NULL, 0, NULL, 0}
     };
 
@@ -90,6 +93,10 @@ void processArgs(int argc, char** argv) {
             plog::get()->setMaxSeverity(plog::verbose);
             LOGI << " opt.verbose = " << opt.verbose;
             break;
+         case 45:
+            opt.sample = true;
+            LOGI << " opt.sample = " << opt.sample;
+            break;
          case ':':
             LOGE << " missing option arg" << argv[optind-1];
             exit(-1);
@@ -117,11 +124,12 @@ void processArgs(int argc, char** argv) {
     g.src_file_ext = g.src_dir_ext;
     g.dst_file_ext = g.dst_dir_ext;
 
+    // file type should match convert option except when:
     if (g.dst_dir_ext == "ann") { g.dst_file_ext = "png" ;}
     if (g.dst_dir_ext == "trk") { g.dst_file_ext = "jpg" ;}
     if (g.dst_dir_ext == "ahe") { g.dst_file_ext = "png" ;}
 
-    LOGI << "convert : " << g.src_dir_ext << " -> " << g.dst_dir_ext;
+    LOGI << "convert : " << g.src_dir_ext << "/file." <<  g.src_dir_ext << " -> " << g.dst_dir_ext << "/file." << g.dst_file_ext;
 
     LOGV << "Option processing complete";
 }
@@ -317,9 +325,25 @@ std::vector<fs::path> get_filenames( fs::path path ) {
     // http://en.cppreference.com/w/cpp/experimental/fs/directory_iterator
     const fs::directory_iterator end {};
 
+    bool is_matched     = true;
+    bool is_not_dotfile = true;
+    bool is_regular     = true;
+    bool is_ext_correct = true;
     for( fs::directory_iterator iter {path}; iter != end; ++iter ) {
         file = iter->path();
-        if( fs::is_regular_file(file) and file.extension() == "." + g.src_file_ext ) {
+        // only sample files..skip every 000
+        if (opt.sample) {
+            string patt = "00." + g.src_file_ext;
+            is_matched = (file.string().find(patt) != string::npos);
+        }
+        string patt = "/.";
+        is_not_dotfile  = (file.string().find(patt) == string::npos);
+        is_regular      = fs::is_regular_file(file);
+        is_ext_correct  = file.extension() == "." + g.src_file_ext ;
+
+
+        //cout << " file = " << file.string() << " is_matched = " << is_matched << " r=" <<  fs::is_regular_file(file) <<    " : " << (file.extension() == "." + g.src_file_ext) << endl;
+        if( is_matched and is_not_dotfile and is_regular and is_ext_correct) {
             filenames.push_back( iter->path() );
         }
     }
@@ -331,9 +355,11 @@ std::vector<fs::path> get_filenames( fs::path path ) {
 fs::path getDestFromSrc (fs::path src) {
 
     src = fs::absolute(src);
-	if (src.parent_path().stem() != g.src_dir_ext) {
-        LOGE << "error assuming dir of file " << src.string() << " should be : " << g.src_dir_ext << " and not " << src.parent_path().stem().string() ;
-    }
+
+    //it's OK!
+	//if (src.parent_path().stem() != g.src_dir_ext) {
+    //   LOGE << "error assuming dir of file " << src.string() << " should be : " << g.src_dir_ext << " and not " << src.parent_path().stem().string() ;
+    //}
 
 	string dst = src.parent_path().parent_path().string() + "/" + g.dst_dir_ext + "/";
 	fs::create_directories(dst);
@@ -391,7 +417,17 @@ int process_raw2dng(fs::path src, fs::path dst) {
 
 
 
-int process_dng2jpg(fs::path src, fs::path dst) { }
+int process_dng2any(fs::path src, fs::path dst) { 
+    if (opt.overwrite  and fs::exists(dst)) {
+        fs::remove(dst);
+    }
+
+    Imagedata image;
+    image.src = src;
+    image.dst = dst;
+    image.writeJpgDirect(dst);
+    // image object is gone but writing may not be complete...
+}
 int process_jpg2trk(fs::path src, fs::path dst) { }
 int process_any2ahe(fs::path src, fs::path dst) { 
     Imagedata img;
@@ -443,7 +479,8 @@ int process_src2dst(string srcstr , string dststr) {
    fs::path src (srcstr); fs::path dst (dststr); 
     
    if (opt.convert == "raw2dng") { return process_raw2dng(src,dst); }
-   if (opt.convert == "dng2jpg") { return process_dng2jpg(src,dst); }
+   if (opt.convert == "dng2jpg") { return process_dng2any(src,dst); }
+   if (opt.convert == "dng2png") { return process_dng2any(src,dst); }
    if (opt.convert == "jpg2ann") { return process_any2ann(src,dst); }
    if (opt.convert == "png2ahe") { return process_any2ahe(src,dst); }
    if (opt.convert == "jpg2trk") { return process_jpg2trk(src,dst); }
@@ -473,7 +510,7 @@ int main(int argc, char** argv ) {
         float percent = 100.0 * (float) index++ / float (size);
         fs::path src = srcdst.first;
         fs::path dst = srcdst.second;
-		LOGI << fixed << setprecision(2) << percent << "% batch : " << src.string() << " -> " << dst.string();
+		LOGI << fixed << setprecision(1) << percent << "% batch : " << src.string() << " -> " << dst.string();
         results.emplace_back(
             //pool.push(process_src2dst, src.string(),dst.string())
             pool.enqueue(process_src2dst, src.string(), dst.string())
