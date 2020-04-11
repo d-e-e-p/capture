@@ -56,9 +56,11 @@ struct Globals {
     string datestamp;
     string mainWindowName;
 
-    int imagewidth  = 768;
+    // for gui
+    int imagewidth  = 728;
     int imageheight = 544;
-    bool toggle_f = false;
+    bool toggle_f_windowsize = false;
+    bool toggle_c_colorcorrect = true;
 
     Mat ccm;
 
@@ -318,16 +320,13 @@ void defineColorCorrectionMatrix() {
     <Element Row="0" Col="0">1.133600</Element>
 */
 
-    float rgb[3][3];
-    rgb[2][2] =  0.4124;
-    rgb[2][1] =  0.0560;
-    rgb[2][0] =  0.0620;
-    rgb[1][2] =  0.2743;
-    rgb[1][1] =  0.7006;
-    rgb[1][0] =  0.0758;
-    rgb[0][2] =  0.0180;
-    rgb[0][1] = -0.5833;
-    rgb[0][0] =  1.1336;
+   // generated using xrite matching
+   float rgb[3][3] = {
+        { 1.444000, -0.263100, -0.156700},
+        {-0.413900,  1.277400, -0.090500},
+        {-0.247300,  0.262400,  0.711200},
+    };
+
 
     float bgr[3][3];
     bgr[0][0] = rgb[2][2];
@@ -340,16 +339,9 @@ void defineColorCorrectionMatrix() {
     bgr[2][1] = rgb[0][1];
     bgr[2][2] = rgb[0][0];
 
-    g.ccm = Mat(3, 3, CV_32FC1, rgb).t();
+    g.ccm = Mat(3, 3, CV_32FC1, bgr).t();
 
-    LOGV << "RGB color correction matrix :";
-    for (int i = 0; i < 3; i++) {
-       for (int j = 0; j < 3; j++) {
-          LOGV << rgb[i][j] << "\t";
-       }
-       // Newline for new row
-       LOGV << "\t";
-    }
+    LOGV << "RGB color correction matrix g.ccm:\n" << g.ccm;
 
 }
 
@@ -385,13 +377,17 @@ void performHotkeyActions(Imagedata* image, int key) {
 
     switch (key) {
         case 'f' : 
-            g.toggle_f = ! g.toggle_f;
-            LOGI << "resize window " << g.toggle_f;
-            if (g.toggle_f) {
+            g.toggle_f_windowsize = ! g.toggle_f_windowsize;
+            LOGI << "resize window: " << g.toggle_f_windowsize;
+            if (g.toggle_f_windowsize) {
                 resizeWindow(g.mainWindowName, 2 * g.imagewidth, 2 * g.imageheight);
             } else {
                 resizeWindow(g.mainWindowName, 1 * g.imagewidth, 1 * g.imageheight);
             }
+            break;
+        case 'c' : 
+            g.toggle_c_colorcorrect = ! g.toggle_c_colorcorrect;
+            LOGI << " color correct: " << g.toggle_c_colorcorrect;
             break;
         case 's' : 
             LOGI << "saving " << image->basename;
@@ -412,65 +408,143 @@ void performHotkeyActions(Imagedata* image, int key) {
 
 
 
-void showImageCorrected(Imagedata* image) {
+// from https://stackoverflow.com/questions/10167534/how-to-find-out-what-type-of-a-mat-object-is-with-mattype-in-opencv
+// CV_8U  - 8-bit unsigned integers ( 0..255 )
+// CV_8S  - 8-bit signed integers ( -128..127 )
+// CV_16U - 16-bit unsigned integers ( 0..65535 )
+// CV_16S - 16-bit signed integers ( -32768..32767 )
+// CV_32S - 32-bit signed integers ( -2147483648..2147483647 )
+// CV_32F - 32-bit floating-point numbers ( -FLT_MAX..FLT_MAX, INF, NAN )
+// CV_64F - 64-bit floating-point numbers ( -DBL_MAX..DBL_MAX, INF, NAN )
 
-    Mat image_16bit(image->height, image->width, CV_16UC1);
-    memcpy(image_16bit.data, image->data, image->datalength);
-    Mat image_bayer1(image->height, image->width, CV_16UC3);
-    demosaicing(image_16bit, image_bayer1, COLOR_BayerRG2RGB);
+string getMatType(Mat M) {
+  int type =  M.type();
+  string r;
 
-    Mat bayer1_float = Mat(image->height, image->width, CV_32FC3);
+  uchar depth = type & CV_MAT_DEPTH_MASK;
+  uchar chans = 1 + (type >> CV_CN_SHIFT);
+
+  switch ( depth ) {
+    case CV_8U:  r = "8U"; break;
+    case CV_8S:  r = "8S"; break;
+    case CV_16U: r = "16U"; break;
+    case CV_16S: r = "16S"; break;
+    case CV_32S: r = "32S"; break;
+    case CV_32F: r = "32F"; break;
+    case CV_64F: r = "64F"; break;
+    default:     r = "User"; break;
+  }
+
+  r += "C";
+  r += (chans+'0');
+
+  return r;
+}
+
+void printMatStats(string name, Mat M) {
     double min, max;
-    minMaxLoc(image_bayer1, &min, &max);
-    LOGV << "image_bayerl (min,max) = " << Point(min,max) <<  std::endl;
-    image_bayer1.convertTo(bayer1_float, CV_32FC3, 1.0 / max);
+    minMaxLoc(M, &min, &max);
 
-    Mat bayer1_float_linear = bayer1_float.reshape(1, image->height*image->width);
-    Mat color_matrixed_linear = bayer1_float_linear * g.ccm;
-    Mat final_color_matrixed = color_matrixed_linear.reshape(3, image->height); // or should be reshape (height, width, CV_32FC3);
-    LOGV << "final_color_matrixed size = " << final_color_matrixed.size() << std::endl;
-    final_color_matrixed.convertTo(final_color_matrixed, CV_32FC3, 256);
+    int max_length = 30;
+    string spacer = "";
+    if (name.length() < max_length) {
+        spacer = string(max_length - name.length(), ' ');
+    }
 
+    LOGV << " Mat=" << name << spacer << " " << getMatType(M) << " : " << M.size() << " x " << M.channels() <<  " (min,max) = "  << Point(min,max) ;
+    string file = "images/" + name + ".jpg";
+    imwrite(file, M);
+}
+
+
+
+// use ccm to "try" and correct colors
+Mat correctImageColors (Imagedata* image, Mat mat_in_int) {
+
+    printMatStats("mat_in_int",     mat_in_int);
+
+    // multiplication needs floating
+    Mat mat_in_float = Mat(image->height, image->width, CV_32F);
+    mat_in_int.convertTo(mat_in_float, CV_32F, 1.0 / 255);
+    printMatStats("mat_in_float",   mat_in_float);
+    
+    // ok linearize it so we can multiply with CCM matrix
+    Mat mat_float_linear = mat_in_float.reshape(1, image->height*image->width);
+    printMatStats("mat_float_linear",  mat_float_linear);
+
+    // multiply with CCM
+    Mat mat_multiplied_linear = mat_float_linear * g.ccm;
+    printMatStats("mat_multiplied_linear",  mat_multiplied_linear);
+
+    // get back to original shape
+    Mat mat_multipled = mat_multiplied_linear.reshape(3, image->height);
+    normalize(mat_multipled, mat_multipled, 255, 0, NORM_MINMAX);
+    printMatStats("mat_multipled",  mat_multipled);
+
+    // convert back to int
+    Mat mat_multipled_int = Mat(image->height, image->width, CV_8U);
+    mat_multipled.convertTo(mat_multipled_int, CV_8U, 1);
+    printMatStats("mat_multipled_int",  mat_multipled_int);
+
+    /*
+    //white balance
     Ptr<xphoto::WhiteBalancer> wb;
     wb = xphoto::createGrayworldWB();
-    Mat image_wb;
-    wb->balanceWhite(final_color_matrixed, image_wb);
 
+    Mat mat_wb_int;
+    wb->balanceWhite(mat_multipled_int, mat_wb_int);
+    printMatStats("mat_wb_int",   mat_wb_int);
 
-    minMaxLoc(image_wb, &min, &max);
-    LOGV << "image_wb (black,white) = " << Point(min,max);
-    imshow(g.mainWindowName,image_wb);
-	image->createAnnoText();
-    string text_status = image->text_east + "    hotkeys: (s) save   (f) resize   (q) quit ";
-    displayOverlay(g.mainWindowName, image->text_north, 0);
-    displayStatusBar(g.mainWindowName, text_status, 0);
+    Mat mat_wb_norm;
+    normalize(mat_wb_int, mat_wb_norm, 255, 0.0, NORM_MINMAX);
+    printMatStats("mat_wb_norm",   mat_wb_norm);
+    */
 
-    int key = cv::waitKey(1);
-    if (key >= 0) {
-        performHotkeyActions(image, key);
-    }
+    //white balance
+    Ptr<xphoto::WhiteBalancer> wb;
+    wb = xphoto::createSimpleWB();
+
+    Mat mat_wb;
+    wb->balanceWhite(mat_multipled, mat_wb);
+    printMatStats("mat_wb", mat_wb);
+
+    Mat mat_wb_norm;
+    normalize(mat_wb, mat_wb_norm, 1.0, 0.0, NORM_MINMAX);
+    printMatStats("mat_wb_norm",   mat_wb_norm);
+
+    return mat_wb_norm;
 }
 
 void showImage(Imagedata* image) {
-    Mat image_16bit(image->height, image->width, CV_16UC1);
-    memcpy(image_16bit.data, image->data, image->datalength);
-    const int CONVERSION_SCALE = 1.0;
-    Mat image_bayer1(image->height, image->width, CV_16UC3);
-    demosaicing(image_16bit, image_bayer1, COLOR_BayerRG2RGB);
+    // step 1: import blob into opencv
+    // step is number of bytes each matrix row occupies including padding
+    int new_width = 728; // width goes from 768 to 728
+    int step = image->width * image->pixel_depth;
+    Mat mat_crop(image->height, new_width, CV_16U, image->data, step);
+    image->width = new_width;
+    printMatStats("mat_crop", mat_crop);
 
-    Mat image_colorcorr(image->height, image->width, CV_16UC3);
-    //cv::xphoto::WhiteBalancer::balanceWhite(image_bayer1,image_colorcorr);
-    //SimplestCB(image_bayer1,image_colorcorr,50);
+    Mat mat_bayer1(image->height, image->width, CV_8U);
+    demosaicing(mat_crop, mat_bayer1, COLOR_BayerRG2RGB);
 
-    double min, max;
-    //minMaxLoc(image_colorcorr, &min, &max);
-    //LOGV << "image_colorcorr (black,white) = " << Point(min,max);
-    imshow(g.mainWindowName,image_bayer1);
+    printMatStats("mat_bayer1", mat_bayer1);
+    Mat mat_todisplay;
+    if (g.toggle_c_colorcorrect) {
+        mat_todisplay = correctImageColors(image, mat_bayer1);
+    } else {
+        mat_todisplay = mat_bayer1;
+    }
+
+    imshow(g.mainWindowName,mat_todisplay);
+
+    //annotations
 	image->createAnnoText();
-    string text_status = image->text_east + "    hotkeys: (s) save   (f) resize   (q) quit ";
+    string text_help = "    hotkeys: (s) save (f) resize (c) color (w) whitebalance   (q) quit ";
+    string text_status = image->text_east + text_help;
     displayOverlay(g.mainWindowName, image->text_north, 0);
     displayStatusBar(g.mainWindowName, text_status, 0);
 
+    //hotkeys
     int key = cv::waitKey(1);
     if (key >= 0) {
         performHotkeyActions(image, key);
