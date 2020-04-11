@@ -46,6 +46,27 @@ using json = nlohmann::json;
 using namespace std;
 using namespace cv;
 
+
+struct Setup {
+    // for job handling
+     future <void> job_queue;
+    // also need to call job_queue.wait();
+    //dng header 
+     string dng_headerfile;
+     char*  dng_headerdata;
+     int    dng_headerlength;
+     int    dng_attribute_start;
+
+     string dt_stylefile;
+     string rt_stylefile;
+
+     // for exif
+     ExifTool* exiftool;
+
+     // for jpg
+     bool use_threaded_jpg;
+} s ;
+
 class Imagedata{
  public:
     string src; 
@@ -76,6 +97,7 @@ class Imagedata{
 
     string comment;
     string text_north;
+    string text_south;
     string text_east;
 
     string command;
@@ -265,12 +287,23 @@ class Imagedata{
     void writeJpg(fs::path file_dest) {
 
         dst = file_dest;
-        //string command = "rawtherapee-cli -Y -o " +  dst + " -q -c " +  src;
-        string command = "darktable-cli --bpp 8 " + src +  " ~/build/tensorfield/snappy/bin/darktable.xml  " + dst;
-        chrono::nanoseconds ns(1);
-        auto status = job_queue.wait_for(ns);
-        if (status == future_status::ready) {
-            job_queue = async(launch::async, runThreadedCommand, command);
+        string command;
+        bool run_rawtherapee = true;
+        if (run_rawtherapee) {
+            command = "rawtherapee-cli -Y -q -o " +  dst + " -p " + s.rt_stylefile + " -j100 -js3 -b8 -c " +  src;
+        } else {
+            command = "darktable-cli --bpp 8 " + src +  " ~/build/tensorfield/snappy/bin/darktable.xml  " + dst;
+        }
+        LOGV << "cmd: " << command ;
+        bool run_threaded = true;
+        if (run_threaded) {
+            chrono::nanoseconds ns(1);
+            auto status = s.job_queue.wait_for(ns);
+            if (status == future_status::ready) {
+                s.job_queue = async(launch::async, runThreadedCommand, command);
+            }
+        } else {
+            runThreadedCommand(command);
         }
     }
 
@@ -279,7 +312,7 @@ class Imagedata{
 
         string exif;
         // read metadata from the image
-        TagInfo *info = exiftool->ImageInfo(src.c_str(),"-UniqueCameraModel");
+        TagInfo *info = s.exiftool->ImageInfo(src.c_str(),"-UniqueCameraModel");
         if (info) {
             for (TagInfo *i=info; i; i=i->next) {
                 if (strcmp(i->name, "UniqueCameraModel") == 0) {
@@ -290,7 +323,7 @@ class Imagedata{
             delete info;
         }
         // print exiftool stderr messages
-        char *err = exiftool->GetError();
+        char *err = s.exiftool->GetError();
         if (err) LOGE << err;
 
         json_to_attributes(exif);
@@ -382,15 +415,15 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     int writeDng(fs::path dngname) {
 
         // assume g.dng_headerdata is loaded 
-        assert(dng_headerdata != nullptr);
+        assert(s.dng_headerdata != nullptr);
 
         string imageinfo = attributes_to_json();
         LOGV << "imageinfo = " << imageinfo; 
         // write attributes
         // reset image size i
-        vector<char> mod_headerdata(dng_headerdata,dng_headerdata + dng_headerlength);
+        vector<char> mod_headerdata(s.dng_headerdata,s.dng_headerdata + s.dng_headerlength);
         for (int i = 0; i < imageinfo.length(); i++) {
-            mod_headerdata.at(i+dng_attribute_start) = imageinfo[i];
+            mod_headerdata.at(i+s.dng_attribute_start) = imageinfo[i];
         }
         //LOGV << "mod_headerdata = " << mod_headerdata; 
 
@@ -400,7 +433,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         LOGV << "writing to : " << dngname.string() ;
         //fs::remove(dngname);
         ofstream outfile (dngname,ofstream::binary);
-        outfile.write (reinterpret_cast<const char*>(&mod_headerdata[0]), dng_headerlength);
+        outfile.write (reinterpret_cast<const char*>(&mod_headerdata[0]), s.dng_headerlength);
         outfile.write (cropdata, datalength);
         outfile.close();
 
@@ -413,28 +446,33 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     // backward flip to init static class in c++11
     static class ClassInit{
       public:
-            ClassInit(fs::path headerfile, fs::path stylefile) {
-                dng_headerlength = fs::file_size(headerfile);
-                cout << " reading dng header : " << headerfile << " size = " << dng_headerlength << endl ;
-                dng_headerdata = new char [dng_headerlength];
-                ifstream fhead (headerfile, ios::in|ios::binary);
-                fhead.read (dng_headerdata, dng_headerlength);
+            ClassInit(fs::path dng_headerfile, fs::path dt_stylefile, fs::path rt_stylefile, bool use_threaded_jpg) {
+
+                s.dng_headerfile = dng_headerfile;
+                s.dt_stylefile   = dt_stylefile;
+                s.rt_stylefile   = rt_stylefile;
+                s.use_threaded_jpg = use_threaded_jpg;
+
+                s.dng_headerlength = fs::file_size(s.dng_headerfile);
+                LOGI << " reading dng header : " <<  s.dng_headerfile << " size = " << s.dng_headerlength ;
+                s.dng_headerdata = new char [s.dng_headerlength];
+                ifstream fhead (s.dng_headerfile, ios::in|ios::binary);
+                fhead.read (s.dng_headerdata, s.dng_headerlength);
                 fhead.close();
 
                 //dng_attribute_start = 5310; // for Ximea-MC031CG-SY-FV-StdA-D65.dcp
-                dng_attribute_start = 5154; // for Snappy-Xrite
+                s.dng_attribute_start = 5154; // for Snappy-Xrite
 
 
                 // init exiftool interface
-                exiftool = new ExifTool();
+                s.exiftool = new ExifTool();
                 // also need to delete exiftool;
 
                 // init magick?
                 MagickCoreGenesis(NULL,MagickFalse);
 
-                job_queue = async(launch::async, []{ });
+                s.job_queue = async(launch::async, []{ });
 
-                dt_stylefile = stylefile;
 
             }
 
@@ -443,18 +481,6 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     // just once
 
  private:
-    // for job handling
-    static future <void> job_queue;
-    // also need to call job_queue.wait();
-    //dng header 
-    static char*  dng_headerdata;
-    static int    dng_headerlength;
-    static int    dng_attribute_start;
-
-    static string dt_stylefile;
-
-    // for exif
-    static ExifTool *exiftool;
 
     static void runThreadedCommand(string command) {
         string result = exec(command);
@@ -517,17 +543,17 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         Mat in (height, old_width, CV_16UC1);
         Mat out(height, new_width, CV_16UC1);
 
-        LOGV << "in = "  << in.size()  ;
-        LOGV << "out = " << out.size() ;
+        //LOGV << "in = "  << in.size()  ;
+        //LOGV << "out = " << out.size() ;
 
         memcpy(in.data, indata, old_datalength);
 
         Rect roi = Rect(0,0, new_width, height);
         Mat crop = in(roi);
-        LOGV << "crop = " << crop.size() << " cont = " << crop.isContinuous() ;
+        //LOGV << "crop = " << crop.size() << " cont = " << crop.isContinuous() ;
 
         crop.copyTo(out);
-        LOGV << "copy = " << out.size() << " cont = " << out.isContinuous() ;
+        //LOGV << "copy = " << out.size() << " cont = " << out.isContinuous() ;
 
         //update globals
         width = new_width;
@@ -577,12 +603,6 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 }; /* end Class */
 
 
-// bring static  init vars to life
-int Imagedata::dng_headerlength = 0;
-int Imagedata::dng_attribute_start = 0;
-char* Imagedata::dng_headerdata = nullptr;
-string Imagedata::dt_stylefile = "";
-ExifTool *Imagedata::exiftool = nullptr;
-future <void> Imagedata::job_queue ;
+
 
 

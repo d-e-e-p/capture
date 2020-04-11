@@ -71,6 +71,7 @@ struct FilePaths {
     //dng header
     fs::path headerfile   = "/home/deep/build/snappy/bin/dng_header.bin";
     fs::path dt_stylefile = "/home/deep/build/snappy/bin/darktable.xml";
+    fs::path rt_stylefile = "/home/deep/build/snappy/bin/xrite_wb.pp3";
 
     //misc file locations
     fs::path folder_data ; // relative to exe ../bin/capture => ../data/images
@@ -124,7 +125,7 @@ struct shutDown {
 
 
 // init Imagedata class
-Imagedata::ClassInit Imagedata::readDngHeaderData(fp.headerfile, fp.dt_stylefile);
+Imagedata::ClassInit Imagedata::readDngHeaderData(fp.headerfile, fp.dt_stylefile, fp.rt_stylefile, false);
 
 
 
