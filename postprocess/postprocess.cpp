@@ -11,9 +11,6 @@
 #include "postprocess.hpp"
 #include "Imagedata.hpp"
 
-//#include "202003281227_attr.hpp"
-map<string,string> attr = {};
-
 // global vars -- but in a struct so that makes it ok :-)
 struct Options {
     string convert = "raw2dng";
@@ -27,10 +24,10 @@ struct Globals {
     // file too small to be valid so ok to overwrite
     int smallsize = 1000;
     // options for source and destination extensions
-    string src_dir_ext;
-    string dst_dir_ext;
-    string src_file_ext;
-    string dst_file_ext;
+    string src_dir_ext  = "raw";
+    string dst_dir_ext  = "raw";
+    string src_file_ext = "dng";
+    string dst_file_ext = "dng";
     //
     string dateStamp;
 } g;
@@ -40,13 +37,12 @@ struct FilePaths {
     vector <fs::path> folder_src_list ;
 
     //dng header
-    fs::path headerfile   = "/home/user/build/tensorfield/snappy/bin/dng_header.bin";
-    fs::path dt_stylefile = "/home/user/build/tensorfield/snappy/bin/darktable.xml";
+    fs::path dng_headerfile   = "<bindir>/dng_header.bin";
+    fs::path dt_stylefile = "<bindir>/darktable.xml";
+    fs::path rt_stylefile = "<bindir>/xrite_wb.pp3";
 
 } fp;
 
-// init Imagedata class
-Imagedata::ClassInit Imagedata::readDngHeaderData(fp.headerfile, fp.dt_stylefile);
 
 
 void processArgs(int argc, char** argv) {
@@ -329,6 +325,7 @@ std::vector<fs::path> get_filenames( fs::path path ) {
     bool is_not_dotfile = true;
     bool is_regular     = true;
     bool is_ext_correct = true;
+
     for( fs::directory_iterator iter {path}; iter != end; ++iter ) {
         file = iter->path();
         // only sample files..skip every 000
@@ -342,7 +339,7 @@ std::vector<fs::path> get_filenames( fs::path path ) {
         is_ext_correct  = file.extension() == "." + g.src_file_ext ;
 
 
-        //cout << " file = " << file.string() << " is_matched = " << is_matched << " r=" <<  fs::is_regular_file(file) <<    " : " << (file.extension() == "." + g.src_file_ext) << endl;
+        //LOGV << " file = " << file.string() << " is_matched=" << is_matched << " reqular=" <<  is_regular <<    " : ext=" << is_ext_correct;
         if( is_matched and is_not_dotfile and is_regular and is_ext_correct) {
             filenames.push_back( iter->path() );
         }
@@ -374,6 +371,7 @@ fs::path getDestFromSrc (fs::path src) {
 vector< pair <fs::path,fs::path> > getAllFiles(void) {
 
     vector< pair <fs::path,fs::path> > allfiles; 
+	LOGV << "getallfiles:";
 
     fs::path dst;
     for (auto it = fp.folder_src_list.begin() ; it != fp.folder_src_list.end(); ++it) {
@@ -395,6 +393,23 @@ vector< pair <fs::path,fs::path> > getAllFiles(void) {
     
 }
 
+vector< pair <fs::path,fs::path> > getAllDirs(void) {
+
+    vector< pair <fs::path,fs::path> > alldirs; 
+	LOGV << "getalldirs:";
+
+    for (auto it = fp.folder_src_list.begin() ; it != fp.folder_src_list.end(); ++it) {
+        fs::path folder_src = *it;
+        fs::path folder_src_absolute = fs::absolute(folder_src);
+	    fs::path folder_dst = folder_src_absolute.parent_path() / g.dst_dir_ext;
+	    LOGV << "folder_src = " << folder_src.string() << " -> " << folder_dst.string();
+        alldirs.push_back( make_pair(folder_src,folder_dst) );
+   }
+
+   return alldirs;
+    
+}
+
 
 
 
@@ -405,17 +420,27 @@ int process_raw2dng(fs::path src, fs::path dst) {
     img.loadImage(src);
 
     // hack: raw files don't have attributes so we need to fake them or get them from a side file...
+    img.sidefile_to_attributes(src,dst); 
+
+    /*
     string datestamp = dst.parent_path().parent_path().string();
     if (datestamp == "202003281227" or datestamp == "202003281219") { 
         img.sidefile_to_attributes(src,attr); 
     } else {
         img.fakedata_to_attributes(src);
     }
+    */
     img.writeDng(dst);
 
 }
 
-
+// call tool on entire dir
+int process_dir_dng2any(fs::path src, fs::path dst) {
+    Imagedata image;
+    image.src = src;
+    image.dst = dst;
+    image.writeJpgDir(src, dst, opt.overwrite); // direct run..don't thread
+}
 
 int process_dng2any(fs::path src, fs::path dst) { 
     if (opt.overwrite  and fs::exists(dst)) {
@@ -425,7 +450,7 @@ int process_dng2any(fs::path src, fs::path dst) {
     Imagedata image;
     image.src = src;
     image.dst = dst;
-    image.writeJpgDirect(dst);
+    image.writeJpg(dst, false); // direct run..don't thread
     // image object is gone but writing may not be complete...
 }
 int process_jpg2trk(fs::path src, fs::path dst) { }
@@ -472,6 +497,17 @@ indicators::ProgressBar* createProgressBar() {
     return bar;
 }
   
+int process_dir_src2dst(string srcstr , string dststr) {
+
+   fs::path src (srcstr); fs::path dst (dststr); 
+    
+//   if (opt.convert == "raw2dng") { return process_dir_raw2dng(src,dst); }
+//   if (opt.convert == "dng2jpg") { return process_dir_dng2any(src,dst); }
+   if (opt.convert == "dng2png") { return process_dir_dng2any(src,dst); }
+//   if (opt.convert == "jpg2ann") { return process_dir_any2ann(src,dst); }
+//   if (opt.convert == "png2ahe") { return process_dir_any2ahe(src,dst); }
+//   if (opt.convert == "jpg2trk") { return process_dir_jpg2trk(src,dst); }
+}
 
 // must be a better way to do this in c
 int process_src2dst(string srcstr , string dststr) {
@@ -486,42 +522,101 @@ int process_src2dst(string srcstr , string dststr) {
    if (opt.convert == "jpg2trk") { return process_jpg2trk(src,dst); }
 }
 
+// count = BUFSIZ is also a problem...
+fs::path getExePath() {
+  char result[ BUFSIZ ];
+  int count = readlink( "/proc/self/exe", result, BUFSIZ );
+  if (count == -1 || count == sizeof(result)) {
+    perror("readlink error on /proc/self/exe: ");
+    exit(-1);
+  }
+  result[count] = '\0';
+  return string( result );
+}
+
+void setupDirs() {
+
+    // first figure out path to exe and base use that to determine where to 
+    // put the images
+    fs::path file_exe = getExePath();
+    fs::path bindir   = file_exe.parent_path();
+
+    fp.dng_headerfile   =  bindir / "dng_header.bin";
+    fp.dt_stylefile =  bindir / "darktable.xml";
+    fp.rt_stylefile =  bindir / "xrite_wb.pp3";
+
+    LOGI << " using dng header:" << fp.dng_headerfile.string() ;
+    LOGV << " using darktable style:" << fp.dt_stylefile.string() ;
+    LOGV << " using rawtherapee style:" << fp.rt_stylefile.string() ;
+
+}
+
+
 int main(int argc, char** argv ) {
+
+    // location of header and style files
+    setupDirs();
 
     // logging
     static plog::ColorConsoleAppender<plog::TxtFormatter> consoleAppender;
     plog::init(plog::info, &consoleAppender);
 
-    // magick
-    MagickCoreGenesis(argv[0],MagickFalse);
-
     processArgs(argc, argv);   
 
-    auto allfiles = getAllFiles();
-    int size = allfiles.size();
-	LOGI << " about to convert " << size << " files from " << opt.convert;
-    int index = 0;
+    // init imagedata
+    bool use_threaded_jpg = true;
+    Imagedata::init(fp.dng_headerfile, fp.dt_stylefile, fp.rt_stylefile, use_threaded_jpg);
 
     // see https://github.com/progschj/ThreadPool
     ThreadPool pool(opt.threads);
     vector< future<int> > results;
+    int index = 0;
+    int size = 0;
 
-    for(const auto& srcdst: allfiles) {
-        float percent = 100.0 * (float) index++ / float (size);
-        fs::path src = srcdst.first;
-        fs::path dst = srcdst.second;
-		LOGI << fixed << setprecision(1) << percent << "% batch : " << src.string() << " -> " << dst.string();
-        results.emplace_back(
-            //pool.push(process_src2dst, src.string(),dst.string())
-            pool.enqueue(process_src2dst, src.string(), dst.string())
-        );
-        //process_src2dst(src,dst);
-     }
 
-    auto bar = createProgressBar();
+    // operate on dirs if tool allows it
+    if ((opt.convert == "dng2jpg") and (! opt.sample)) {
+        auto alldirs = getAllDirs();
+        size = alldirs.size();
+        LOGI << " about to convert " << size << " dirs from " << opt.convert;
+        for(const auto& srcdst: alldirs) {
+            float percent = 100.0 * (float) index++ / float (size);
+            fs::path src = srcdst.first;
+            fs::path dst = srcdst.second;
+		    LOGI << fixed << setprecision(1) << percent << "% batch : " << src.string() << " -> " << dst.string();
+            if (opt.threads == 0) {
+                process_dir_src2dst(src.string(), dst.string());
+            } else {
+                results.emplace_back(
+                    pool.enqueue(process_dir_src2dst, src.string(), dst.string())
+                );
+            }
+        }
+     } else {
+        auto allfiles = getAllFiles();
+        size = allfiles.size();
+        LOGI << " about to convert " << size << " files from " << opt.convert;
+
+        for(const auto& srcdst: allfiles) {
+            float percent = 100.0 * (float) index++ / float (size);
+            fs::path src = srcdst.first;
+            fs::path dst = srcdst.second;
+            LOGI << fixed << setprecision(1) << percent << "% batch : " << src.string() << " -> " << dst.string();
+
+            if (opt.threads == 0) {
+                process_src2dst(src.string(), dst.string());
+            } else {
+                results.emplace_back(
+                    pool.enqueue(process_src2dst, src.string(), dst.string())
+                );
+            }
+         }
+    }
+
 
     //  wait for return values in dispatch order, assume no single long running job in queue
     index = 0;
+    auto bar = createProgressBar();
     for(auto && result: results) {
         result.get();
         float percent = 100.0 * (float) index++ / float (size);
@@ -535,8 +630,9 @@ int main(int argc, char** argv ) {
     MagickCoreTerminus();
     cout << "\e[?25h";
     cout << "all done\n";
-    sleep(10);
+    //sleep(10);
    
     return 0;
 }
+
 

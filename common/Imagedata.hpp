@@ -40,35 +40,24 @@ namespace fs=std::experimental::filesystem;
 //for parsing args 
 #include "boost/program_options/parsers.hpp"
 
+// fake attributes
+#include "../common/attr_0411.hpp"
+#include "../common/attr_comment_0411.hpp"
 
+//map<string,string> attr = {};
+//map<string,string> attr_comment = {};
 
 using json = nlohmann::json;
 using namespace std;
 using namespace cv;
 
 
-struct Setup {
-    // for job handling
-     future <void> job_queue;
-    // also need to call job_queue.wait();
-    //dng header 
-     string dng_headerfile;
-     char*  dng_headerdata;
-     int    dng_headerlength;
-     int    dng_attribute_start;
 
-     string dt_stylefile;
-     string rt_stylefile;
-
-     // for exif
-     ExifTool* exiftool;
-
-     // for jpg
-     bool use_threaded_jpg;
-} s ;
 
 class Imagedata{
  public:
+
+    // image settings
     string src; 
     string dst;
     char* data = nullptr;
@@ -102,6 +91,27 @@ class Imagedata{
 
     string command;
 
+    // share setup with all object members
+    static struct Setup {
+        // for job handling
+         future <void> job_queue;
+        // TODO: also need to call job_queue.wait();
+        //dng header 
+         string dng_headerfile;
+         char*  dng_headerdata;
+         int    dng_headerlength;
+         int    dng_attribute_start;
+
+         string dt_stylefile;
+         string rt_stylefile;
+
+         // for exif
+         ExifTool* exiftool;
+
+         // for jpg
+         bool use_threaded_jpg;
+    } s ;
+
     //Destructor
     ~Imagedata(){
         delete data;
@@ -109,37 +119,6 @@ class Imagedata{
 
     //Constructor
     Imagedata() {
-    }
-
-    // assume string input is in json format 
-    void json_to_attributes(string jstr) {
-
-        jstr = trim(jstr);
-        //cout << "trim = " << jstr << endl;
-        json jin = json::parse(jstr);
-
-        src =               jin["src"];
-        dst =               jin["dst"];
-        header =            jin["header"];
-        basename =          jin["basename"];
-        datestamp =         jin["datestamp"];
-        system_clock_ns =   jin["system_clock_ns"];
-        steady_clock_ns =   jin["steady_clock_ns"];
-        gain =              jin["gain"];
-        expo =              jin["expo"];
-        sweep_index =       jin["sweep_index"];
-        sweep_total =       jin["sweep_total"];
-        fps =               jin["fps"];
-        delta_ms =          jin["delta_ms"];
-        bpp  =              jin["bpp"];
-        width  =            jin["width"];
-        height  =           jin["height"];
-        datalength  =       jin["datalength"];
-        comment =           jin["comment"];
-        text_north =        jin["text_north"];
-        text_east =         jin["text_east"];
-        command =           jin["command"];
-    
     }
 
     // HACK: just use filename to construct fake data
@@ -171,44 +150,34 @@ class Imagedata{
     }
 
     // use side file to construct data
-    void sidefile_to_attributes(fs::path filename, map<string,string> &attr) {
-        basename = filename.stem().string();
-        if (attr.find(basename) == attr.end() ) {
-            LOGE << "No map entry for : " << basename;
+    void sidefile_to_attributes(fs::path srcp, fs::path dstp) {
+        src = srcp;
+        dst = dstp;
+        basename = srcp.stem().string();
+        datestamp = dstp.parent_path().parent_path().stem().string();
+        string key = datestamp + "/" + basename;
+        if (attr.find(key) == attr.end() ) {
+            LOGE << "dst = " << dst;
+            LOGE << "datestamp = " << datestamp;
+            LOGE << "basename = " << basename;
+            LOGE << "attr has no map entry for : " << key;
+            exit(-1);
         }
-        string jstr = attr[basename];
+        // override comment
+        if (attr_comment.find(datestamp) == attr_comment.end() ) {
+            LOGE << "attr_comment has no map entry for : " << datestamp;
+            exit(-1);
+        }
+
+        string jstr = attr[key];
         json_to_attributes(jstr);
-        src = filename;
+
+        //overrides
+        comment = attr_comment[datestamp];
+        src = srcp;
+        dst = dstp;
     }
 
-
-    string attributes_to_json() {
-
-        json jout;
-
-        jout["src"]=                src;
-        jout["header"]=             header;
-        jout["basename"]=           basename;
-        jout["datestamp"]=          datestamp;
-        jout["system_clock_ns"]=    system_clock_ns;
-        jout["steady_clock_ns"]=    steady_clock_ns;
-        jout["gain"]=               gain;
-        jout["expo"]=               expo;
-        jout["sweep_index"]=        sweep_index;
-        jout["sweep_total"]=        sweep_total;
-        jout["fps"]=                fps;
-        jout["delta_ms"]=           delta_ms;
-        jout["bpp"]=                bpp ;
-        jout["width"]=              width ;
-        jout["height"]=             height ;
-        jout["datalength"]=         datalength ;
-        jout["comment"]=            comment;
-        jout["text_north"]=         text_north;
-        jout["text_east"]=          text_east;
-        jout["command"]=            command;
-
-        return jout.dump();
-    }
 
     void loadImage(fs::path filename) { 
         src = filename;
@@ -273,29 +242,28 @@ class Imagedata{
 
     }
 
-    // launch and return
-    void writeJpgDirect(fs::path file_dest) {
+    void writeJpgDir(fs::path folder_src, fs::path folder_dest, bool overwrite=true) {
 
-        dst = file_dest;
-        //string command = "rawtherapee-cli -Y -o " +  dst + " -q -c " +  src;
-        string command = "darktable-cli " + src +  " ~/build/tensorfield/snappy/bin/darktable.xml  " + dst;
+        src = folder_src;
+        dst = folder_dest;
+        string y_option = overwrite ? " -Y " : " " ;
+        string command = "rawtherapee-cli " + y_option + " -q -o " +  dst + " -p " + s.rt_stylefile + " -j100 -js3 -b8 -c " +  src;
+        LOGV << "cmd: " << command ;
         runThreadedCommand(command);
     }
 
 
-    // launch and return
-    void writeJpg(fs::path file_dest) {
+    // launch and return if threaded
+    void writeJpg(fs::path file_dest, bool run_threaded=true, bool run_rawtherapee=true) {
 
         dst = file_dest;
         string command;
-        bool run_rawtherapee = true;
         if (run_rawtherapee) {
             command = "rawtherapee-cli -Y -q -o " +  dst + " -p " + s.rt_stylefile + " -j100 -js3 -b8 -c " +  src;
         } else {
-            command = "darktable-cli --bpp 8 " + src +  " ~/build/tensorfield/snappy/bin/darktable.xml  " + dst;
+            command = "darktable-cli --bpp 8 " + src +  " " + s.dt_stylefile + " " + dst;
         }
         LOGV << "cmd: " << command ;
-        bool run_threaded = true;
         if (run_threaded) {
             chrono::nanoseconds ns(1);
             auto status = s.job_queue.wait_for(ns);
@@ -332,36 +300,6 @@ class Imagedata{
     }
 
 
-    void runMagick(string cmd) {
-        ImageInfo *image_info = AcquireImageInfo();
-        ExceptionInfo *exception = AcquireExceptionInfo();
-
-        auto parts = boost::program_options::split_unix(cmd);
-        std::vector<char*> cstrings ;
-        for(auto& str : parts){
-            cstrings.push_back(const_cast<char*> (str.c_str()));
-        }
-
-        int argc = (int)cstrings.size();
-        char** argv = cstrings.data();
-
-        //LOGV << "cmd = " << cmd;
-        //copy( argv, argv+argc, ostream_iterator<const char*>( cout, " " ) ) ;
-        //cout << "\n";
-
-        (void) MagickImageCommand(image_info, argc, argv, NULL, exception);
-        LOGV << "cmd DONE= " << cmd;
-
-       if (exception->severity != UndefinedException) {
-            CatchException(exception);
-            LOGE << "Magick: Major Error Detected ";
-            LOGE << exception->reason;
-            LOGE << exception->description;
-        }
-
-        image_info=DestroyImageInfo(image_info);
-        exception=DestroyExceptionInfo(exception);
-    }
 
     void writeAnnotated( fs::path to, bool label) {
 
@@ -443,44 +381,100 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 
 
 
-    // backward flip to init static class in c++11
-    static class ClassInit{
-      public:
-            ClassInit(fs::path dng_headerfile, fs::path dt_stylefile, fs::path rt_stylefile, bool use_threaded_jpg) {
+    //class init just once
+    static void init(fs::path dng_headerfile, fs::path dt_stylefile, fs::path rt_stylefile, bool use_threaded_jpg) {
 
-                s.dng_headerfile = dng_headerfile;
-                s.dt_stylefile   = dt_stylefile;
-                s.rt_stylefile   = rt_stylefile;
-                s.use_threaded_jpg = use_threaded_jpg;
+        s.dng_headerfile = dng_headerfile;
+        s.dt_stylefile   = dt_stylefile;
+        s.rt_stylefile   = rt_stylefile;
+        s.use_threaded_jpg = use_threaded_jpg;
 
-                s.dng_headerlength = fs::file_size(s.dng_headerfile);
-                LOGI << " reading dng header : " <<  s.dng_headerfile << " size = " << s.dng_headerlength ;
-                s.dng_headerdata = new char [s.dng_headerlength];
-                ifstream fhead (s.dng_headerfile, ios::in|ios::binary);
-                fhead.read (s.dng_headerdata, s.dng_headerlength);
-                fhead.close();
+        //load in header
+        s.dng_headerlength = fs::file_size(s.dng_headerfile);
+        LOGI << " reading dng header : " <<  s.dng_headerfile << " size = " << s.dng_headerlength ;
+        s.dng_headerdata = new char [s.dng_headerlength];
+        ifstream fhead (s.dng_headerfile, ios::in|ios::binary);
+        fhead.read (s.dng_headerdata, s.dng_headerlength);
+        fhead.close();
 
-                //dng_attribute_start = 5310; // for Ximea-MC031CG-SY-FV-StdA-D65.dcp
-                s.dng_attribute_start = 5154; // for Snappy-Xrite
+        // should be something like 5310...
+        s.dng_attribute_start = findStartOfSetting(s.dng_headerdata, s.dng_headerlength);
 
+        // init exiftool interface
+        s.exiftool = new ExifTool();
+        // also need to delete exiftool;
 
-                // init exiftool interface
-                s.exiftool = new ExifTool();
-                // also need to delete exiftool;
+        // init magick?
+        MagickCoreGenesis(NULL,MagickFalse);
 
-                // init magick?
-                MagickCoreGenesis(NULL,MagickFalse);
+        s.job_queue = async(launch::async, []{ });
 
-                s.job_queue = async(launch::async, []{ });
+     } 
 
-
-            }
-
-     } readDngHeaderData;
-
-    // just once
 
  private:
+
+    // assume string input is in json format 
+    void json_to_attributes(string jstr) {
+
+        // TODO: fix bug
+        //jstr = trim(jstr);
+        //LOGV << "trim = " << jstr ;
+        json jin = json::parse(jstr);
+
+        src =               jin["src"];
+        dst =               jin["dst"];
+        header =            jin["header"];
+        basename =          jin["basename"];
+        datestamp =         jin["datestamp"];
+        system_clock_ns =   jin["system_clock_ns"];
+        steady_clock_ns =   jin["steady_clock_ns"];
+        gain =              jin["gain"];
+        expo =              jin["expo"];
+        sweep_index =       jin["sweep_index"];
+        sweep_total =       jin["sweep_total"];
+        fps =               jin["fps"];
+        delta_ms =          jin["delta_ms"];
+        bpp  =              jin["bpp"];
+        width  =            jin["width"];
+        height  =           jin["height"];
+        datalength  =       jin["datalength"];
+        comment =           jin["comment"];
+        text_north =        jin["text_north"];
+        text_east =         jin["text_east"];
+        command =           jin["command"];
+
+    
+    }
+
+    string attributes_to_json() {
+
+        json jout;
+
+        jout["src"]=                src;
+        jout["header"]=             header;
+        jout["basename"]=           basename;
+        jout["datestamp"]=          datestamp;
+        jout["system_clock_ns"]=    system_clock_ns;
+        jout["steady_clock_ns"]=    steady_clock_ns;
+        jout["gain"]=               gain;
+        jout["expo"]=               expo;
+        jout["sweep_index"]=        sweep_index;
+        jout["sweep_total"]=        sweep_total;
+        jout["fps"]=                fps;
+        jout["delta_ms"]=           delta_ms;
+        jout["bpp"]=                bpp ;
+        jout["width"]=              width ;
+        jout["height"]=             height ;
+        jout["datalength"]=         datalength ;
+        jout["comment"]=            comment;
+        jout["text_north"]=         text_north;
+        jout["text_east"]=          text_east;
+        jout["command"]=            command;
+
+        return jout.dump();
+    }
+
 
     static void runThreadedCommand(string command) {
         string result = exec(command);
@@ -515,15 +509,59 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     static string trim(const std::string &s) {
         //cout << "start = " << s << endl;
         auto start = s.begin();
-        while (start != s.end() and *start != '{') 
-            start++;
+        if (*start != '{') 
+            while (start != s.end() and *start != '{') 
+                start++;
 
         auto end = s.end();
-        while (end != start and *end != '}') 
-            end--;
+        if (*end != '}') 
+            while (start != s.end() and *start != '{') 
+                while (end != start and *end != '}') 
+                    end--;
 
         return string(start, end + 1);
     }
+
+    static bool matchHelper(const vector<char>& data, const vector<char>& patt, int dataindex) {                                                                            
+      int match_count = 0;
+      int match_count_total = patt.size();
+   
+      for (int i = 0; i < patt.size(); i++) {
+          int offset = i + dataindex;
+          if (patt[i] != data[offset]) {
+                  return false;
+          }
+        match_count++;
+        //cout << "match at d[" << offset << "] = " << data[offset] << " " <<  " p[" << i << "] =" << patt[i] << " count = " << match_count << endl;
+          if (match_count == match_count_total) {
+              return true;
+          }
+      }
+  
+  
+  }
+  
+
+
+    // stupid c++ regex can't deal with binary data...so a 1 liner in python/perl becomes:
+    static int findStartOfSetting (char *headerdata, int headerlength) {
+
+      string str(900,'_'); // look for  ______ 1024 long line
+
+      vector<char> data(headerdata,headerdata + headerlength);
+      vector<char> patt(str.begin(), str.end());
+      LOGV << "looking in dng header for " << str ;
+
+      for (int i = 0; i < data.size(); i++) {
+          if (matchHelper(data, patt, i)) {
+                  return i;
+          }
+      }
+      LOGE << "pattern not found in headerfile :" << str;
+      exit(-1);
+    }
+
+
 
     char* crop_opencv(char* indata) {
         //int bpp = 16;
@@ -598,11 +636,41 @@ int writeAnnotated(Imagedata image, fs::path dst) {
       }
 
 
+    void runMagick(string cmd) {
+        ImageInfo *image_info = AcquireImageInfo();
+        ExceptionInfo *exception = AcquireExceptionInfo();
+
+        auto parts = boost::program_options::split_unix(cmd);
+        std::vector<char*> cstrings ;
+        for(auto& str : parts){
+            cstrings.push_back(const_cast<char*> (str.c_str()));
+        }
+
+        int argc = (int)cstrings.size();
+        char** argv = cstrings.data();
+
+        //LOGV << "cmd = " << cmd;
+        //copy( argv, argv+argc, ostream_iterator<const char*>( cout, " " ) ) ;
+        //cout << "\n";
+
+        (void) MagickImageCommand(image_info, argc, argv, NULL, exception);
+        LOGV << "cmd DONE= " << cmd;
+
+       if (exception->severity != UndefinedException) {
+            CatchException(exception);
+            LOGE << "Magick: Major Error Detected ";
+            LOGE << exception->reason;
+            LOGE << exception->description;
+        }
+
+        image_info=DestroyImageInfo(image_info);
+        exception=DestroyExceptionInfo(exception);
+    }
 
 
 }; /* end Class */
 
 
-
+struct Imagedata::Setup Imagedata::s;
 
 
