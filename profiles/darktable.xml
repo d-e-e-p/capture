@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<darktable_style version="1.0">
+    <info>
+        <name>batch snappy handling</name><description></description>
+    </info>
+    <style>
+        <plugin>
+            <num>0</num><module>1</module><operation>rawprepare</operation><op_params>000000000000000000000000000000000000000000000000ffff0000</op_params><enabled>1</enabled><blendop_params>gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ=</blendop_params><blendop_version>9</blendop_version><multi_priority>0</multi_priority><multi_name></multi_name><iop_order>1.000000</iop_order>
+        </plugin>
+        <plugin>
+            <num>1</num><module>3</module><operation>temperature</operation><op_params>faffbf3f0000803f5a66e63f0000c07f</op_params><enabled>1</enabled><blendop_params>gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ=</blendop_params><blendop_version>9</blendop_version><multi_priority>0</multi_priority><multi_name></multi_name><iop_order>3.000000</iop_order>
+        </plugin>
+        <plugin>
+            <num>2</num><module>3</module><operation>demosaic</operation><op_params>0000000000000000000000000000000000000000</op_params><enabled>1</enabled><blendop_params>gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ=</blendop_params><blendop_version>9</blendop_version><multi_priority>0</multi_priority><multi_name></multi_name><iop_order>8.000000</iop_order>
+        </plugin>
+        <plugin>
+            <num>3</num><module>6</module><operation>colorin</operation><op_params>gz48eJzjYhgFowABWAbaAaNgwAEANOwADw==</op_params><enabled>1</enabled><blendop_params>gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ=</blendop_params><blendop_version>9</blendop_version><multi_priority>0</multi_priority><multi_name></multi_name><iop_order>28.000000</iop_order>
+        </plugin>
+        <plugin>
+            <num>4</num><module>5</module><operation>colorout</operation><op_params>gz35eJxjZBgFo4CBAQAEEAAC</op_params><enabled>1</enabled><blendop_params>gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ=</blendop_params><blendop_version>9</blendop_version><multi_priority>0</multi_priority><multi_name></multi_name><iop_order>69.000000</iop_order>
+        </plugin>
+        <plugin>
+            <num>5</num><module>1</module><operation>gamma</operation><op_params>0000000000000000</op_params><enabled>1</enabled><blendop_params>gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ=</blendop_params><blendop_version>9</blendop_version><multi_priority>0</multi_priority><multi_name></multi_name><iop_order>77.000000</iop_order>
+        </plugin>
+        <plugin>
+            <num>6</num><module>2</module><operation>flip</operation><op_params>ffffffff</op_params><enabled>1</enabled><blendop_params>gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ=</blendop_params><blendop_version>9</blendop_version><multi_priority>0</multi_priority><multi_name></multi_name><iop_order>16.000000</iop_order>
+        </plugin>
+        <plugin>
+            <num>7</num><module>6</module><operation>basecurve</operation><op_params>gz09eJxjYIAAruuLrbmuK1vPmilpN2vmTLuzZ87YGRsb2zMwONgbGxcD6QYoHgVDCbAhsZkwZCFxyghkAQB+Xg6q</op_params><enabled>1</enabled><blendop_params>gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ=</blendop_params><blendop_version>9</blendop_version><multi_priority>0</multi_priority><multi_name></multi_name><iop_order>43.000000</iop_order>
+        </plugin>
+    </style>
+</darktable_style>
