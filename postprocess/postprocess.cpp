@@ -36,10 +36,10 @@ struct FilePaths {
 
     vector <fs::path> folder_src_list ;
 
-    //dng header
-    fs::path dng_headerfile   = "<bindir>/dng_header.bin";
-    fs::path dt_stylefile = "<bindir>/darktable.xml";
-    fs::path rt_stylefile = "<bindir>/xrite_wb.pp3";
+    // dng header and profile files relative to exe
+    fs::path dng_headerfile = "<profiledir>/dng_header.bin";
+    fs::path dt_stylefile   = "<profiledir>/darktable.xml";
+    fs::path rt_stylefile   = "<profiledir>/xrite_wb.pp3";
 
 } fp;
 
@@ -54,6 +54,7 @@ void processArgs(int argc, char** argv) {
         {"overwrite",   no_argument,        0, 43 },
         {"verbose",     no_argument,        0, 44 },
         {"sample",      no_argument,        0, 45 },
+        {"threads",     required_argument,  0, 46 },
         {NULL, 0, NULL, 0}
     };
 
@@ -93,6 +94,10 @@ void processArgs(int argc, char** argv) {
             opt.sample = true;
             LOGI << " opt.sample = " << opt.sample;
             break;
+         case 46:
+            opt.threads = stoi(optarg);
+            LOGI << " opt.threads = " << opt.threads;
+            break;
          case ':':
             LOGE << " missing option arg" << argv[optind-1];
             exit(-1);
@@ -121,9 +126,10 @@ void processArgs(int argc, char** argv) {
     g.dst_file_ext = g.dst_dir_ext;
 
     // file type should match convert option except when:
-    if (g.dst_dir_ext == "ann") { g.dst_file_ext = "png" ;}
-    if (g.dst_dir_ext == "trk") { g.dst_file_ext = "jpg" ;}
-    if (g.dst_dir_ext == "ahe") { g.dst_file_ext = "png" ;}
+    // png should produce png, jpg -> jpg 
+    if (g.dst_dir_ext == "ann") { g.dst_file_ext = g.src_file_ext ;}
+    if (g.dst_dir_ext == "trk") { g.dst_file_ext = g.src_file_ext ;}
+    if (g.dst_dir_ext == "ahe") { g.dst_file_ext = g.src_file_ext ;}
 
     LOGI << "convert : " << g.src_dir_ext << "/file." <<  g.src_dir_ext << " -> " << g.dst_dir_ext << "/file." << g.dst_file_ext;
 
@@ -442,6 +448,19 @@ int process_dir_dng2any(fs::path src, fs::path dst) {
     image.writeJpgDir(src, dst, opt.overwrite); // direct run..don't thread
 }
 
+int process_dir_any2ahe(fs::path src, fs::path dst) {
+    // assert opt.overwrite
+    if (!opt.overwrite) {
+        LOGE << " overrite needs to be on for this option!";
+        exit(-1);
+    }
+    Imagedata image;
+    image.src = src;
+    image.dst = dst;
+    image.writeAheDir(g.src_file_ext, g.dst_file_ext); // direct run..thread at app level
+}
+
+
 int process_dng2any(fs::path src, fs::path dst) { 
     if (opt.overwrite  and fs::exists(dst)) {
         fs::remove(dst);
@@ -502,10 +521,11 @@ int process_dir_src2dst(string srcstr , string dststr) {
    fs::path src (srcstr); fs::path dst (dststr); 
     
 //   if (opt.convert == "raw2dng") { return process_dir_raw2dng(src,dst); }
-//   if (opt.convert == "dng2jpg") { return process_dir_dng2any(src,dst); }
+   if (opt.convert == "dng2jpg") { return process_dir_dng2any(src,dst); }
    if (opt.convert == "dng2png") { return process_dir_dng2any(src,dst); }
 //   if (opt.convert == "jpg2ann") { return process_dir_any2ann(src,dst); }
-//   if (opt.convert == "png2ahe") { return process_dir_any2ahe(src,dst); }
+   if (opt.convert == "jpg2ahe") { return process_dir_any2ahe(src,dst); }
+   if (opt.convert == "png2ahe") { return process_dir_any2ahe(src,dst); }
 //   if (opt.convert == "jpg2trk") { return process_dir_jpg2trk(src,dst); }
 }
 
@@ -517,9 +537,10 @@ int process_src2dst(string srcstr , string dststr) {
    if (opt.convert == "raw2dng") { return process_raw2dng(src,dst); }
    if (opt.convert == "dng2jpg") { return process_dng2any(src,dst); }
    if (opt.convert == "dng2png") { return process_dng2any(src,dst); }
+   if (opt.convert == "jpg2ahe") { return process_any2ahe(src,dst); }
    if (opt.convert == "jpg2ann") { return process_any2ann(src,dst); }
-   if (opt.convert == "png2ahe") { return process_any2ahe(src,dst); }
    if (opt.convert == "jpg2trk") { return process_jpg2trk(src,dst); }
+   if (opt.convert == "png2ahe") { return process_any2ahe(src,dst); }
 }
 
 // count = BUFSIZ is also a problem...
@@ -539,11 +560,11 @@ void setupDirs() {
     // first figure out path to exe and base use that to determine where to 
     // put the images
     fs::path file_exe = getExePath();
-    fs::path bindir   = file_exe.parent_path();
+    fs::path profiledir = file_exe.parent_path().parent_path() / "profiles";
 
-    fp.dng_headerfile   =  bindir / "dng_header.bin";
-    fp.dt_stylefile =  bindir / "darktable.xml";
-    fp.rt_stylefile =  bindir / "xrite_wb.pp3";
+    fp.dng_headerfile   =  profiledir / "dng_header_659080.bin";
+    fp.dt_stylefile     =  profiledir / "darktable.xml";
+    fp.rt_stylefile     =  profiledir / "xrite_apr10.pp3";
 
     LOGI << " using dng header:" << fp.dng_headerfile.string() ;
     LOGV << " using darktable style:" << fp.dt_stylefile.string() ;
@@ -573,9 +594,17 @@ int main(int argc, char** argv ) {
     int index = 0;
     int size = 0;
 
+    // turn off openmp threading if running multiple instances
+    if (opt.threads > 1) {
+        char env[]="OMP_NUM_THREADS=1"; 
+        putenv( env ); 
+    }
 
     // operate on dirs if tool allows it
-    if ((opt.convert == "dng2jpg") and (! opt.sample)) {
+    bool run_dir_dng2any = (opt.convert == "dng2jpg") or (opt.convert == "dng2png");
+    bool run_dir_any2ahe = opt.overwrite and ((opt.convert == "jpg2ahe") or (opt.convert == "png2ahe"));
+    bool run_dir_mode = (! opt.sample) and (run_dir_dng2any or run_dir_any2ahe);
+    if (run_dir_mode) {
         auto alldirs = getAllDirs();
         size = alldirs.size();
         LOGI << " about to convert " << size << " dirs from " << opt.convert;
@@ -626,7 +655,7 @@ int main(int argc, char** argv ) {
     
 
     // shutdown
-    pool.~ThreadPool();
+    //pool.~ThreadPool();
     MagickCoreTerminus();
     cout << "\e[?25h";
     cout << "all done\n";
@@ -634,5 +663,6 @@ int main(int argc, char** argv ) {
    
     return 0;
 }
+
 
 

@@ -311,9 +311,9 @@ class Imagedata{
             string pointsize_north = to_string( (float) 1000 / (float) text_north.length() - 2 );
             string pointsize_east  = to_string( (float) 1000 / (float) text_east.length()  - 2 );
             // 728 x 544 -> 768 x 584
-            cmd = "/usr/local/bin/magick  " + src + " -clahe 25x25%+128+2 -gravity Southwest -background black -extent 768x584 -font Inconsolata -pointsize " + pointsize_north + " -fill yellow -gravity North -annotate 0x0+0+15 \"" + text_north + "\" -gravity East -pointsize " + pointsize_east + " -annotate 90x90+20+232 \"" + text_east + "\" " + dst;
+            cmd = "/usr/local/bin/magick  " + src + " -clahe 25x25%+128+2 -quality 100 -gravity Southwest -background black -extent 768x584 -font Inconsolata -pointsize " + pointsize_north + " -fill yellow -gravity North -annotate 0x0+0+15 \"" + text_north + "\" -gravity East -pointsize " + pointsize_east + " -annotate 90x90+20+232 \"" + text_east + "\" -quality 100 " + dst;
         } else {
-            cmd = "magick  " + src + " -clahe 25x25%+128+2 " + dst;
+            cmd = "magick  " + src + " -clahe 25x25%+128+2 -quality 100 " + dst;
         }
 
         runMagick(cmd);
@@ -321,9 +321,29 @@ class Imagedata{
 
     }
 
-    void writeAhe(fs::path from, fs::path to) {
+   void writeAheDir(string src_file_ext, string dst_file_ext) {
 
-        string cmd = "magick  " + from.string() + " -clahe 25x25%+128+2 " + to.string();
+        bool fix_vignette= true;
+        string cmd_fix_vignette =  " ";
+        if (fix_vignette) {
+            cmd_fix_vignette =  "  /home/user/build/tensorfield/snappy/bin/flatfield.pgm -fx '(u/v)*v.p{w/2,h/2}' ";
+        }
+
+        string cmd = "magick mogrify -quality 100 -format " + dst_file_ext + " -path " + dst + cmd_fix_vignette +  " -clahe 25x25%+128+2 " + src + "/*." + src_file_ext;
+        runMagick(cmd);
+
+    }
+
+
+   void writeAhe(fs::path from, fs::path to) {
+
+        bool fix_vignette= true;
+        string cmd_fix_vignette =  " ";
+        if (fix_vignette) {
+            cmd_fix_vignette =  "  /home/user/build/tensorfield/snappy/bin/flatfield.pgm -fx '(u/v)*v.p{w/2,h/2}' ";
+        }
+
+        string cmd = "magick -quality 100  " + from.string() + cmd_fix_vignette +  " -clahe 25x25%+128+2 " + to.string();
         runMagick(cmd);
 
     }
@@ -653,14 +673,12 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         //copy( argv, argv+argc, ostream_iterator<const char*>( cout, " " ) ) ;
         //cout << "\n";
 
+        LOGV << "cmd = " << cmd;
         (void) MagickImageCommand(image_info, argc, argv, NULL, exception);
-        LOGV << "cmd DONE= " << cmd;
 
        if (exception->severity != UndefinedException) {
             CatchException(exception);
-            LOGE << "Magick: Major Error Detected ";
-            LOGE << exception->reason;
-            LOGE << exception->description;
+            LOGE << "magick error";
         }
 
         image_info=DestroyImageInfo(image_info);
