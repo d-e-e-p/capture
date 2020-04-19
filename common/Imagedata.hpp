@@ -41,11 +41,11 @@ namespace fs=std::experimental::filesystem;
 #include "boost/program_options/parsers.hpp"
 
 // fake attributes
-#include "../common/attr_0411.hpp"
-#include "../common/attr_comment_0411.hpp"
+//#include "../common/attr_0411.hpp"
+//#include "../common/attr_comment_0411.hpp"
 
-//map<string,string> attr = {};
-//map<string,string> attr_comment = {};
+map<string,string> attr = {};
+map<string,string> attr_comment = {};
 
 using json = nlohmann::json;
 using namespace std;
@@ -75,6 +75,10 @@ class Imagedata{
     int sweep_total = 0;
     float fps;
     float delta_ms;
+    float focus1 = 0;
+    float focus2 = 0;
+    float focus3 = 0;
+    float focus4 = 0;
 
     int width  = 728;
     int height = 544;
@@ -222,8 +226,8 @@ class Imagedata{
 
         char buff[BUFSIZ];
         int delta_ms_precision = (delta_ms > 10) ? 0 : 1 ;
-        snprintf(buff, sizeof(buff), "%s %3.0ffps %3.*fms gain=%d exp=%d", 
-                basename.c_str(), fps, delta_ms_precision, delta_ms, gain, expo);
+        snprintf(buff, sizeof(buff), "%s %3.0ffps %3.*fms gain=%d exp=%d focus=%.0f%% %.0f%% %.0f%% %.0f%%", 
+                basename.c_str(), fps, delta_ms_precision, delta_ms, gain, expo, focus1, focus2, focus3, focus4);
         text_north = buff;
 
         if (sweep_total > 0) {

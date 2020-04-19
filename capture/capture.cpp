@@ -68,10 +68,10 @@ struct Globals {
 
 struct FilePaths {
 
-    //dng header
-    fs::path headerfile   = "/home/deep/build/snappy/bin/dng_header.bin";
-    fs::path dt_stylefile = "/home/deep/build/snappy/bin/darktable.xml";
-    fs::path rt_stylefile = "/home/deep/build/snappy/bin/xrite_wb.pp3";
+    // dng header and profile files relative to exe
+    fs::path dng_headerfile = "<profiledir>/dng_header.bin";
+    fs::path dt_stylefile   = "<profiledir>/darktable.xml";
+    fs::path rt_stylefile   = "<profiledir>/xrite_wb.pp3";
 
     //misc file locations
     fs::path folder_data ; // relative to exe ../bin/capture => ../data/images
@@ -124,8 +124,6 @@ struct shutDown {
 } sd;
 
 
-// init Imagedata class
-Imagedata::ClassInit Imagedata::readDngHeaderData(fp.headerfile, fp.dt_stylefile, fp.rt_stylefile, false);
 
 
 
@@ -246,6 +244,12 @@ void setupDirs() {
     // first figure out path to exe and base use that to determine where to 
     // put the images
     fs::path file_exe = getExePath();
+
+    fs::path profiledir = file_exe.parent_path().parent_path() / "profiles";
+    fp.dng_headerfile   =  profiledir / "dng_header_659080.bin";
+    fp.dt_stylefile     =  profiledir / "darktable.xml";
+    fp.rt_stylefile     =  profiledir / "xrite_apr10.pp3";
+
     // snappy/bin/capture -> snappy/data
     fp.folder_data = file_exe.parent_path().parent_path().string() + "/data/images";
     if (! fs::exists(fp.folder_data)) {
@@ -274,12 +278,19 @@ void setupDirs() {
     //plog::Severity maxSeverity = opt.verbose ? plog::verbose : plog::info;
     plog::init(plog::info, &fileAppender).addAppender(&consoleAppender);
 
+    bool use_threaded_jpg = true;
+    Imagedata::init(fp.dng_headerfile, fp.dt_stylefile, fp.rt_stylefile, use_threaded_jpg);
+
     LOGI << g.header ;
     LOGI << opt.comment ;
 
     fp.folder_raw = fp.folder_base / "raw"; fs::create_directories(fp.folder_raw);
     fp.folder_dng = fp.folder_base / "dng"; fs::create_directories(fp.folder_dng);
     fp.folder_jpg = fp.folder_base / "jpg"; fs::create_directories(fp.folder_jpg);
+
+    LOGI << " using dng header:" << fp.dng_headerfile.string() ;
+    LOGV << " using darktable style:" << fp.dt_stylefile.string() ;
+    LOGV << " using rawtherapee style:" << fp.rt_stylefile.string() ;
 
     LOGI << "results under:" << fp.folder_base.string() ;
     LOGV << "   raw under : "  << fp.folder_raw.string();
@@ -444,8 +455,11 @@ string getMatType(Mat M) {
 
 void printMatStats(string name, Mat M) {
     double min, max;
-    minMaxLoc(M, &min, &max);
 
+    if (true)
+        return;
+
+    minMaxLoc(M, &min, &max);
     int max_length = 30;
     string spacer = "";
     if (name.length() < max_length) {
@@ -453,8 +467,10 @@ void printMatStats(string name, Mat M) {
     }
 
     LOGV << " Mat=" << name << spacer << " " << getMatType(M) << " : " << M.size() << " x " << M.channels() <<  " (min,max) = "  << Point(min,max) ;
-    string file = "images/" + name + ".jpg";
-    imwrite(file, M);
+    if (opt.verbose) {
+        string file = "images/" + name + ".jpg";
+        imwrite(file, M);
+    }
 }
 
 
@@ -516,6 +532,106 @@ Mat correctImageColors (Imagedata* image, Mat mat_in_int) {
     return mat_wb_norm;
 }
 
+//http://www.programmersought.com/article/2549148775/
+float get_sobel_mean(cv::Mat img) {
+    cv::Mat imageSobel;
+    Sobel(img, imageSobel, CV_8U, 1, 1);
+    double meanValue = mean(imageSobel)[0];
+    return meanValue * 50.0;
+}
+float get_lap_var(cv::Mat img) {
+    cv::Mat dst;
+    //Laplace(f) = \dfrac{\partial^{2} f}{\partial x^{2}} + \dfrac{\partial^{2} f}{\partial y^{2}}
+    int kernel_size = 3;
+    int ddepth = CV_8U;
+    Laplacian(img, dst, ddepth, kernel_size, BORDER_DEFAULT);
+    Mat tmp_m, tmp_sd;
+    double m = 0, sd = 0;
+    meanStdDev(dst, tmp_m, tmp_sd);
+    m = tmp_m.at<double>(0, 0);
+    sd = tmp_sd.at<double>(0, 0);
+    //cout << "laplacian......... Mean: " << m << " ,laplacian StdDev: " << sd << endl;
+    return sd ;
+}
+ 
+float get_img_dft_mean(cv::Mat input)
+{
+    cvtColor(input, input, COLOR_BGR2GRAY);
+    int w = getOptimalDFTSize(input.cols);
+    int h = getOptimalDFTSize(input.rows);//Get the best size, fast Fourier transform requires size n to the nth power
+    Mat padded;
+         copyMakeBorder(input, padded, 0, h - input.rows, 0, w - input.cols, BORDER_CONSTANT, Scalar::all(0));//The fill image is saved to padded
+ 
+         Mat plane[] = { Mat_<float>(padded), Mat_<float>::zeros(padded.size()) };//Create a channel
+    Mat complexIm;
+         merge(plane, 2, complexIm);//Merge channel
+ 
+         dft(complexIm, complexIm);// perform Fourier transform, the result is saved in itself
+    int rows = complexIm.rows;
+    int cols = complexIm.cols;
+    int offsetX = rows / 6;
+    int offsetY = cols / 6;
+    float mean = 0;
+    int count = 0;
+    for (size_t i = 0; i < rows; i++)
+    {
+        float *ptr = complexIm.ptr<float>(i);
+        for (size_t j = 0; j < cols * 2; j = j + 2)
+        {
+            if ((i > offsetX && i < (rows - offsetX)) && (j > 2 * offsetY && j < (2 * cols - 2 * offsetY))) {
+                mean += sqrt(ptr[j] * ptr[j] + ptr[j + 1] * ptr[j + 1]);
+                count++;
+            }
+        }
+    }
+    return (50.0/1000.0) * mean / count;
+}
+
+float get_canny_mean(Mat frame) {
+    unsigned long int sum = 0;
+    unsigned long int size = frame.cols * frame.rows;
+
+    Mat edges;
+    cvtColor(frame, edges, cv::COLOR_BGR2GRAY);
+    printMatStats("edges1", edges);
+
+    GaussianBlur(edges, edges, Size(7, 7), 1.5, 1.5);
+    printMatStats("edges2", edges);
+    Canny(edges, edges, 0, 30, 3);
+    printMatStats("edges3", edges);
+
+    MatIterator_<uchar> it, end;
+    for (it = edges.begin<uchar>(), end = edges.end<uchar>(); it != end; ++it) {
+        sum += *it != 0;
+    }
+
+    return 1000.0 * (double) sum / (double) size;
+
+}
+
+
+/**
+ * https://github.com/jhicks256/OpenCV-Samples/blob/master/autofocus.cpp
+ * http://www.programmersought.com/article/81881960309/
+ * Rate frame from 0/blury/ to 1/sharp/.
+ */
+void estimateSharpness(Imagedata* image, Mat& mat_in) {
+    unsigned long int sum = 0;
+    unsigned long int size = mat_in.cols * mat_in.rows;
+    Mat frame;
+    mat_in.convertTo(frame, CV_8U, 255.0/65536.0);
+    normalize(frame, frame, 255, 0, NORM_MINMAX);
+    printMatStats("frame", frame);
+
+    image->focus1 = get_canny_mean(frame);
+    image->focus2 = get_sobel_mean(frame);
+    image->focus3 = get_lap_var(frame);
+    image->focus4 = get_img_dft_mean(frame);
+
+    LOGV << "f1=" << image->focus1 << " f2=" << image->focus2 << " f3=" << image->focus3 << " f4=" << image->focus4;
+
+}
+
 void showImage(Imagedata* image) {
     // step 1: import blob into opencv
     // step is number of bytes each matrix row occupies including padding
@@ -537,6 +653,9 @@ void showImage(Imagedata* image) {
     }
 
     imshow(g.mainWindowName,mat_todisplay);
+
+    //focus estimate
+    estimateSharpness(image, mat_bayer1);
 
     //annotations
 	image->createAnnoText();
