@@ -16,7 +16,7 @@
 struct Options {
     int  minutes = 0;
     int  frames = 1000;
-    int  gain = 50;
+    int  gain = 25;
     int  expo = 750; // max = 8256
     int  fps = 0;
 
@@ -456,7 +456,7 @@ string getMatType(Mat M) {
 void printMatStats(string name, Mat M) {
     double min, max;
 
-    if (true)
+    if (false)
         return;
 
     minMaxLoc(M, &min, &max);
@@ -536,6 +536,7 @@ Mat correctImageColors (Imagedata* image, Mat mat_in_int) {
 float get_sobel_mean(cv::Mat img) {
     cv::Mat imageSobel;
     Sobel(img, imageSobel, CV_8U, 1, 1);
+    printMatStats("get_sobel_mean", imageSobel);
     double meanValue = mean(imageSobel)[0];
     return meanValue * 50.0;
 }
@@ -545,6 +546,7 @@ float get_lap_var(cv::Mat img) {
     int kernel_size = 3;
     int ddepth = CV_8U;
     Laplacian(img, dst, ddepth, kernel_size, BORDER_DEFAULT);
+    printMatStats("get_lap_var", dst);
     Mat tmp_m, tmp_sd;
     double m = 0, sd = 0;
     meanStdDev(dst, tmp_m, tmp_sd);
@@ -557,16 +559,16 @@ float get_lap_var(cv::Mat img) {
 float get_img_dft_mean(cv::Mat input)
 {
     cvtColor(input, input, COLOR_BGR2GRAY);
+    // N = 2^p * 3^q * 5^r for some integer p, q, r.
     int w = getOptimalDFTSize(input.cols);
-    int h = getOptimalDFTSize(input.rows);//Get the best size, fast Fourier transform requires size n to the nth power
+    int h = getOptimalDFTSize(input.rows);
     Mat padded;
-         copyMakeBorder(input, padded, 0, h - input.rows, 0, w - input.cols, BORDER_CONSTANT, Scalar::all(0));//The fill image is saved to padded
- 
-         Mat plane[] = { Mat_<float>(padded), Mat_<float>::zeros(padded.size()) };//Create a channel
+    copyMakeBorder(input, padded, 0, h - input.rows, 0, w - input.cols, BORDER_CONSTANT, Scalar::all(0));//The fill image is saved to padded
+    Mat plane[] = { Mat_<float>(padded), Mat_<float>::zeros(padded.size()) };//Create a channel
     Mat complexIm;
-         merge(plane, 2, complexIm);//Merge channel
- 
-         dft(complexIm, complexIm);// perform Fourier transform, the result is saved in itself
+    merge(plane, 2, complexIm);//Merge channel
+    dft(complexIm, complexIm);// perform Fourier transform, the result is saved in itself
+    //printMatStats("get_img_dft_mean", complexIm);
     int rows = complexIm.rows;
     int cols = complexIm.cols;
     int offsetX = rows / 6;
@@ -584,7 +586,7 @@ float get_img_dft_mean(cv::Mat input)
             }
         }
     }
-    return (50.0/1000.0) * mean / count;
+    return mean / count;
 }
 
 float get_canny_mean(Mat frame) {
@@ -593,19 +595,17 @@ float get_canny_mean(Mat frame) {
 
     Mat edges;
     cvtColor(frame, edges, cv::COLOR_BGR2GRAY);
-    printMatStats("edges1", edges);
-
     GaussianBlur(edges, edges, Size(7, 7), 1.5, 1.5);
-    printMatStats("edges2", edges);
     Canny(edges, edges, 0, 30, 3);
-    printMatStats("edges3", edges);
+    printMatStats("get_canny_mean", edges);
 
     MatIterator_<uchar> it, end;
     for (it = edges.begin<uchar>(), end = edges.end<uchar>(); it != end; ++it) {
         sum += *it != 0;
     }
 
-    return 1000.0 * (double) sum / (double) size;
+    const float fac = 0.8 * 1000;
+    return  fac * (double) sum / (double) size;
 
 }
 
@@ -624,11 +624,12 @@ void estimateSharpness(Imagedata* image, Mat& mat_in) {
     printMatStats("frame", frame);
 
     image->focus1 = get_canny_mean(frame);
-    image->focus2 = get_sobel_mean(frame);
-    image->focus3 = get_lap_var(frame);
-    image->focus4 = get_img_dft_mean(frame);
+    //image->focus2 = get_sobel_mean(frame);
+    //image->focus3 = get_lap_var(frame);
+    //image->focus4 = get_img_dft_mean(frame);
 
-    LOGV << "f1=" << image->focus1 << " f2=" << image->focus2 << " f3=" << image->focus3 << " f4=" << image->focus4;
+    //LOGV << "f1=" << image->focus1 << " f2=" << image->focus2 << " f3=" << image->focus3 << " f4=" << image->focus4;
+    LOGV << "f1=" << image->focus1 ;
 
 }
 

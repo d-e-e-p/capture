@@ -162,7 +162,7 @@ Uniformity=5
 
 [White Balance]
 Enabled=true
-Setting=Camera
+Setting=Auto
 Temperature=4878
 Green=0.440
 Equal=1
