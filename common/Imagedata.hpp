@@ -519,6 +519,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
             throw runtime_error("popen() failed!");
         }
         while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+            //LOGV << buffer.data();
             result += buffer.data();
         }
         // remove blank lines from result

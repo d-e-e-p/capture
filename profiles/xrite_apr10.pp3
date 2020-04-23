@@ -586,7 +586,7 @@ LabRegionsShowMask=-1
 [RAW]
 DarkFrame=/szeva
 DarkFrameAuto=false
-FlatFieldFile=file:/home/user/build/tensorfield/snappy/profiles/flatfield.pgm
+FlatFieldFile=/home/user/build/tensorfield/snappy/profiles/flatfield_apr09_01.dng
 FlatFieldAutoSelect=false
 FlatFieldBlurRadius=32
 FlatFieldBlurType=Area Flatfield

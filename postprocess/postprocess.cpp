@@ -13,11 +13,11 @@
 
 // global vars -- but in a struct so that makes it ok :-)
 struct Options {
-    string convert = "raw2dng";
-    bool overwrite = false;
-    bool verbose = false;
-    bool sample = false;
-    int  threads = 4;
+    string convert  = "raw2dng";
+    bool overwrite  = false;
+    bool verbose    = false;
+    bool sample     = false;
+    int  threads    = 4;
 } opt;
 
 struct Globals {
@@ -37,9 +37,9 @@ struct FilePaths {
     vector <fs::path> folder_src_list ;
 
     // dng header and profile files relative to exe
-    fs::path dng_headerfile = "<profiledir>/dng_header.bin";
+    fs::path dng_headerfile = "<profiledir>/sample_dng_header.bin";
     fs::path dt_stylefile   = "<profiledir>/darktable.xml";
-    fs::path rt_stylefile   = "<profiledir>/xrite_wb.pp3";
+    fs::path rt_stylefile   = "<profiledir>/rawtherapee.pp3";
 
 } fp;
 
@@ -426,7 +426,7 @@ int process_raw2dng(fs::path src, fs::path dst) {
     img.loadImage(src);
 
     // hack: raw files don't have attributes so we need to fake them or get them from a side file...
-    img.sidefile_to_attributes(src,dst); 
+    //img.sidefile_to_attributes(src,dst); 
 
     /*
     string datestamp = dst.parent_path().parent_path().string();
@@ -562,9 +562,9 @@ void setupDirs() {
     fs::path file_exe = getExePath();
     fs::path profiledir = file_exe.parent_path().parent_path() / "profiles";
 
-    fp.dng_headerfile   =  profiledir / "dng_header_659080.bin";
+    fp.dng_headerfile   =  profiledir / "dng_header_091065.bin";
     fp.dt_stylefile     =  profiledir / "darktable.xml";
-    fp.rt_stylefile     =  profiledir / "xrite_apr10.pp3";
+    fp.rt_stylefile     =  profiledir / "xrite_apr19.pp3";
 
     LOGI << " using dng header:" << fp.dng_headerfile.string() ;
     LOGV << " using darktable style:" << fp.dt_stylefile.string() ;
@@ -594,12 +594,6 @@ int main(int argc, char** argv ) {
     int index = 0;
     int size = 0;
 
-    // turn off openmp threading if running multiple instances
-    if (opt.threads > 1) {
-        char env[]="OMP_NUM_THREADS=1"; 
-        putenv( env ); 
-    }
-
     // operate on dirs if tool allows it
     bool run_dir_dng2any = (opt.convert == "dng2jpg") or (opt.convert == "dng2png");
     bool run_dir_any2ahe = opt.overwrite and ((opt.convert == "jpg2ahe") or (opt.convert == "png2ahe"));
@@ -608,6 +602,13 @@ int main(int argc, char** argv ) {
         auto alldirs = getAllDirs();
         size = alldirs.size();
         LOGI << " about to convert " << size << " dirs from " << opt.convert;
+        // turn off openmp threading if running multiple instances
+        if ((opt.threads > 1) and (size > opt.threads)) {
+            char env[]="OMP_NUM_THREADS=1"; 
+            putenv( env ); 
+            LOGI << " turning off app level multithreading: " << env;
+        }
+
         for(const auto& srcdst: alldirs) {
             float percent = 100.0 * (float) index++ / float (size);
             fs::path src = srcdst.first;
@@ -625,6 +626,11 @@ int main(int argc, char** argv ) {
         auto allfiles = getAllFiles();
         size = allfiles.size();
         LOGI << " about to convert " << size << " files from " << opt.convert;
+        if ((opt.threads > 1) and (size > opt.threads)) {
+            char env[]="OMP_NUM_THREADS=1"; 
+            putenv( env ); 
+            LOGI << " turning off app level multithreading: " << env;
+        }
 
         for(const auto& srcdst: allfiles) {
             float percent = 100.0 * (float) index++ / float (size);

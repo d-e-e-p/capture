@@ -18,7 +18,7 @@ Black=0
 HighlightCompr=0
 HighlightComprThreshold=0
 ShadowCompr=50
-HistogramMatching=true
+HistogramMatching=false
 CurveFromHistogramMatching=false
 ClampOOG=true
 CurveMode=FilmLike
@@ -162,7 +162,7 @@ Uniformity=5
 
 [White Balance]
 Enabled=true
-Setting=Camera
+Setting=Auto
 Temperature=4878
 Green=0.440
 Equal=1
@@ -223,7 +223,7 @@ Threshold=13
 HueCurve=1;0.16666666699999999;0;0.34999999999999998;0.34999999999999998;0.34699999999999998;0;0.34999999999999998;0.34999999999999998;0.51366742600000004;0;0.34999999999999998;0.34999999999999998;0.66894457100000004;0;0.34999999999999998;0.34999999999999998;0.82877752459999998;0.97835991;0.34999999999999998;0.34999999999999998;0.99088838270000001;0;0.34999999999999998;0.34999999999999998;
 
 [Dehaze]
-Enabled=false
+Enabled=true
 Strength=50
 ShowDepthMap=false
 Depth=25
@@ -377,7 +377,7 @@ DeconvDamping=0
 DeconvIterations=100
 
 [Color Management]
-InputProfile=file:/home/user/build/tensorfield/snappy/profiles/xrite_apr10.dcp
+InputProfile=file:/home/user/build/tensorfield/snappy/profiles/xrite_0411_ave.dcp
 ToneCurve=false
 ApplyLookTable=true
 ApplyBaselineExposureOffset=true
@@ -586,7 +586,7 @@ LabRegionsShowMask=-1
 [RAW]
 DarkFrame=/szeva
 DarkFrameAuto=false
-FlatFieldFile=/home/user/Pictures/flat_field/szeva
+FlatFieldFile=/home/user/build/tensorfield/snappy/profiles/flatfield_apr09_01_wb.dng
 FlatFieldAutoSelect=false
 FlatFieldBlurRadius=32
 FlatFieldBlurType=Area Flatfield
