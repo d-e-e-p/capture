@@ -16,8 +16,8 @@
 struct Options {
     int  minutes = 0;
     int  frames = 1000;
-    int  gain = 25;
-    int  expo = 750; // max = 8256
+    int  gain = 0;
+    int  expo = 500; // max = 8256
     int  fps = 0;
 
     // -1 value for min/max sweep => use sensor min/max
@@ -246,7 +246,7 @@ void setupDirs() {
     fs::path file_exe = getExePath();
 
     fs::path profiledir = file_exe.parent_path().parent_path() / "profiles";
-    fp.dng_headerfile   =  profiledir / "dng_header_659080.bin";
+    fp.dng_headerfile   =  profiledir / "dng_header_101010.bin";
     fp.dt_stylefile     =  profiledir / "darktable.xml";
     fp.rt_stylefile     =  profiledir / "xrite_apr10.pp3";
 
@@ -376,8 +376,8 @@ void setupCamera() {
         resizeWindow(g.mainWindowName, g.imagewidth, g.imageheight);
         createButton("save image",buttonCallback,NULL,QT_PUSH_BUTTON,1);
         //int cvCreateTrackbar(const char* trackbar_name, const char* window_name, int* value, int count, CvTrackbarCallback on_change=NULL )¶
-        createTrackbar( "gain", g.mainWindowName, &opt.gain, 480,   tbCallbackGain);
-        createTrackbar( "expo", g.mainWindowName, &opt.expo, 8256,  tbCallbackExpo);
+        createTrackbar( "gain", g.mainWindowName, &opt.gain, 300,   tbCallbackGain);
+        createTrackbar( "expo", g.mainWindowName, &opt.expo, 3000,  tbCallbackExpo);
     }
 
     return;
