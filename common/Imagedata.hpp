@@ -14,6 +14,8 @@ namespace fs=std::experimental::filesystem;
 #include <sstream>
 #include <assert.h>
 
+#include <regex>                                                                                         
+
 // for threading
 #include <future>
 #include <thread>
@@ -21,7 +23,6 @@ namespace fs=std::experimental::filesystem;
 
 //logging
 #include <plog/Log.h>
-
 //exif
 #include "exif/ExifTool.h"
 
@@ -226,8 +227,8 @@ class Imagedata{
 
         char buff[BUFSIZ];
         int delta_ms_precision = (delta_ms > 10) ? 0 : 1 ;
-        snprintf(buff, sizeof(buff), "%s %3.0ffps %3.*fms gain=%d exp=%d focus=%.0f%% %.0f%% %.0f%% %.0f%%", 
-                basename.c_str(), fps, delta_ms_precision, delta_ms, gain, expo, focus1, focus2, focus3, focus4);
+        snprintf(buff, sizeof(buff), "%s %3.0ffps %3.*fms gain=%d exp=%d focus=%.0f%%", 
+                basename.c_str(), fps, delta_ms_precision, delta_ms, gain, expo, focus1);
         text_north = buff;
 
         if (sweep_total > 0) {
@@ -299,7 +300,7 @@ class Imagedata{
         if (err) LOGE << err;
 
         json_to_attributes(exif);
-        LOGI << " sweep_total " << sweep_total ;
+        //LOGI << " sweep_total " << sweep_total ;
 
     }
 
@@ -313,9 +314,10 @@ class Imagedata{
         if (label) {
             // determined by experiments
             string pointsize_north = to_string( (float) 1000 / (float) text_north.length() - 2 );
-            string pointsize_east  = to_string( (float) 1000 / (float) text_east.length()  - 2 );
+            string pointsize_east  = to_string( (float)  800 / (float) text_east.length()  - 2 );
             // 728 x 544 -> 768 x 584
-            cmd = "/usr/local/bin/magick  " + src + " -clahe 25x25%+128+2 -quality 100 -gravity Southwest -background black -extent 768x584 -font Inconsolata -pointsize " + pointsize_north + " -fill yellow -gravity North -annotate 0x0+0+15 \"" + text_north + "\" -gravity East -pointsize " + pointsize_east + " -annotate 90x90+20+232 \"" + text_east + "\" -quality 100 " + dst;
+            //cmd = "/usr/local/bin/magick  " + src + " -clahe 25x25%+128+2 -quality 100 -gravity Southwest -background black -extent 768x584 -font Inconsolata -pointsize " + pointsize_north + " -fill yellow -gravity North -annotate 0x0+0+15 \"" + text_north + "\" -gravity East -pointsize " + pointsize_east + " -annotate 90x90+20+232 \"" + text_east + "\" -quality 100 " + dst;
+            cmd = "/usr/local/bin/magick  " + src + " -quality 100 -gravity Northwest -background black -extent 768x584 -font Inconsolata -pointsize " + pointsize_north + " -fill yellow -gravity South -annotate 0x0+0+15 \"" + text_north + "\" -gravity East -pointsize " + pointsize_east + " -annotate 90x90+20+232 \"" + text_east + "\" -quality 100 " + dst;
         } else {
             cmd = "magick  " + src + " -clahe 25x25%+128+2 -quality 100 " + dst;
         }
@@ -374,7 +376,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 
    
     // assume input data is in raw format!
-    int writeDng(fs::path dngname) {
+    int writeDng(fs::path dngname, bool wb_and_cc) {
 
         // assume g.dng_headerdata is loaded 
         assert(s.dng_headerdata != nullptr);
@@ -390,7 +392,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         //LOGV << "mod_headerdata = " << mod_headerdata; 
 
         //reshape the size of data to get rid of band if needed ... assume width = 768 or 728
-        char* cropdata = crop_opencv(data);
+        char* cropdata = crop_wb_cc(data, wb_and_cc);
 
         LOGV << "writing to : " << dngname.string() ;
         //fs::remove(dngname);
@@ -403,6 +405,36 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 
     }
 
+
+    int writeJpgFromRaw() {
+        //int bpp = 16;
+        //int height = 544;
+        //int pixel_depth = bpp / CHAR_BIT;
+
+        int old_width  = 768;
+        int new_width = 728;
+        int step = old_width * pixel_depth;
+
+        Mat mat_crop(height, new_width, CV_16U, data, step);
+        printMatStats("mat_crop", mat_crop);
+        //update globals
+        width = new_width;
+        line_width = width * pixel_depth;
+        datalength = line_width * height;
+         
+        LOGV << "copy = " << mat_crop.size() << " cont = " << mat_crop.isContinuous() ;
+        
+        Mat mat_bayer1(height, width, CV_16U);
+        demosaicing(mat_crop, mat_bayer1, COLOR_BayerRG2RGB);
+        printMatStats("mat_bayer1", mat_bayer1);
+
+        //Mat mat_out(height, new_width, CV_16UC1);
+        Mat mat_out = correctImageColors(mat_bayer1);
+        printMatStats("mat_out", mat_out);
+
+        imwrite(dst,mat_out);
+
+      }
 
 
     //class init just once
@@ -442,7 +474,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     void json_to_attributes(string jstr) {
 
         // TODO: fix bug
-        //jstr = trim(jstr);
+        jstr = trim(jstr);
         //LOGV << "trim = " << jstr ;
         json jin = json::parse(jstr);
 
@@ -540,11 +572,16 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 
         auto end = s.end();
         if (*end != '}') 
-            while (start != s.end() and *start != '{') 
-                while (end != start and *end != '}') 
-                    end--;
+            while (end != start and *end != '}') 
+                end--;
 
-        return string(start, end + 1);
+        string result = string(start, end + 1);
+
+        // now make sure there are no blank "" -- crashes json
+        regex patt ("\"src\"");
+        result = regex_replace (result,patt,"\"dst\":\"\",\"src\"");
+
+        return result;
     }
 
     static bool matchHelper(const vector<char>& data, const vector<char>& patt, int dataindex) {                                                                            
@@ -587,44 +624,89 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     }
 
 
+    // from https://stackoverflow.com/questions/10167534/how-to-find-out-what-type-of-a-mat-object-is-with-mattype-in-opencv
+    // CV_8U  - 8-bit unsigned integers ( 0..255 )
+    // CV_8S  - 8-bit signed integers ( -128..127 )
+    // CV_16U - 16-bit unsigned integers ( 0..65535 )
+    // CV_16S - 16-bit signed integers ( -32768..32767 )
+    // CV_32S - 32-bit signed integers ( -2147483648..2147483647 )
+    // CV_32F - 32-bit floating-point numbers ( -FLT_MAX..FLT_MAX, INF, NAN )
+    // CV_64F - 64-bit floating-point numbers ( -DBL_MAX..DBL_MAX, INF, NAN )
 
-    char* crop_opencv(char* indata) {
+    string getMatType(Mat M) {
+      int type =  M.type();
+      string r;
+
+      uchar depth = type & CV_MAT_DEPTH_MASK;
+      uchar chans = 1 + (type >> CV_CN_SHIFT);
+
+      switch ( depth ) {
+        case CV_8U:  r = "8U"; break;
+        case CV_8S:  r = "8S"; break;
+        case CV_16U: r = "16U"; break;
+        case CV_16S: r = "16S"; break;
+        case CV_32S: r = "32S"; break;
+        case CV_32F: r = "32F"; break;
+        case CV_64F: r = "64F"; break;
+        default:     r = "User"; break;
+      }
+
+      r += "C";
+      r += (chans+'0');
+
+      return r;
+    }
+
+
+
+    void printMatStats(string name, Mat M) {
+        double min, max;
+
+        if (false)
+            return;
+
+        minMaxLoc(M, &min, &max);
+        int max_length = 30;
+        string spacer = "";
+        if (name.length() < max_length) {
+            spacer = string(max_length - name.length(), ' ');
+        }
+
+        LOGV << " Mat=" << name << spacer << " " << getMatType(M) << " : " << M.size() << " x " << M.channels() <<  " (min,max) = "  << Point(min,max) ;
+        //LOGV << " Mat=" << M;
+        if (true) {
+            string file = "images/" + name + ".jpg";
+            imwrite(file, M);
+        }
+    }
+
+
+
+    char* crop_wb_cc(char* indata, bool wb_and_cc) {
         //int bpp = 16;
         //int height = 544;
         //int pixel_depth = bpp / CHAR_BIT;
-         
-          
-        int old_width = 768; // or take from current width var?
-        int old_line_width = old_width * pixel_depth;
-        int old_datalength = old_line_width * height;
 
+        int old_width  = 768;
         int new_width = 728;
-        int new_line_width = new_width * pixel_depth;
-        int new_datalength = new_line_width * height;
+        int step = old_width * pixel_depth;
 
-
-        Mat in (height, old_width, CV_16UC1);
-        Mat out(height, new_width, CV_16UC1);
-
-        //LOGV << "in = "  << in.size()  ;
-        //LOGV << "out = " << out.size() ;
-
-        memcpy(in.data, indata, old_datalength);
-
-        Rect roi = Rect(0,0, new_width, height);
-        Mat crop = in(roi);
-        //LOGV << "crop = " << crop.size() << " cont = " << crop.isContinuous() ;
-
-        crop.copyTo(out);
+        Mat mat_crop(height, new_width, CV_16U, indata, step);
+        printMatStats("mat_crop", mat_crop);
         //LOGV << "copy = " << out.size() << " cont = " << out.isContinuous() ;
+
+        Mat mat_out(height, new_width, CV_16UC1);
+        mat_crop.copyTo(mat_out);
+        printMatStats("mat_out", mat_out);
+
 
         //update globals
         width = new_width;
-        line_width = new_line_width;
-        datalength = new_datalength;
+        line_width = width * pixel_depth;
+        datalength = line_width * height;
 
-        char* res = new char [new_datalength];
-        memcpy(res, out.data, new_datalength);
+        char* res = new char [datalength];
+        memcpy(res, mat_out.data, datalength);
         return res;
 
       }
@@ -659,6 +741,81 @@ int writeAnnotated(Imagedata image, fs::path dst) {
           return res;
 
       }
+
+    #include<cmath>
+    float colorCorrectPixel(string RGB, float r, float g, float b) {
+
+        const float m[3][7] = {
+            {2.0420 , 1.3335 , -0.2554 , 2.5708,  0.3313 , -2.4732},
+            {0.4303 , 3.1096 ,  0.1063 ,-0.9487,  1.7227 , -0.1972},
+            {2.6054 , 0.5803 ,  6.3472 ,-0.8337, -1.5363 ,  5.3990},
+         };
+        const float gamma = 2.2;
+
+        float out;
+        if (RGB == "R") {
+            out = m[0][0] * r*r + m[0][1] * g*g + m[0][2] * b*b + 
+                  m[0][3] * r   + m[0][4] * g   + m[0][5] * b   +
+                  m[0][6];
+        }
+        if (RGB == "G") {
+            out = m[1][0] * r*r + m[1][1] * g*g + m[1][2] * b*b + 
+                  m[1][3] * r   + m[1][4] * g   + m[1][5] * b   +
+                  m[1][6];
+        }
+        if (RGB == "B") {
+            out = m[2][0] * r*r + m[2][1] * g*g + m[2][2] * b*b + 
+                  m[2][3] * r   + m[2][4] * g   + m[2][5] * b   +
+                  m[2][6];
+        }
+
+        // gamma correct
+        out = pow(out, (1 / gamma));
+
+        return out;
+    }
+
+    // use ccm to "try" and correct colors
+    Mat correctImageColors (Mat mat_in_int) {
+
+        // multiplication needs floating
+        Mat mat_out_float = Mat(height, width, CV_32F);
+        mat_in_int.convertTo(mat_out_float, CV_32F, 1.0 / 65535);
+        printMatStats("mat_out_float_initial",   mat_out_float);
+
+        // loop for now..
+        // using https://stackoverflow.com/questions/7899108/opencv-get-pixel-channel-value-from-mat-image
+        int cn = mat_out_float.channels();
+        float ro,go,bo;
+        float rn,gn,bn;
+
+        for(int i = 0; i < mat_out_float.rows; i++) {
+            float* rowPtr = mat_out_float.ptr<float>(i);
+            for(int j = 0; j < mat_out_float.cols; j++) {
+
+                // get
+                bo = rowPtr[j*cn + 0]; // B
+                go = rowPtr[j*cn + 1]; // G
+                ro = rowPtr[j*cn + 2]; // R
+
+                rn = colorCorrectPixel("R",ro,go,bo);
+                gn = colorCorrectPixel("G",ro,go,bo);
+                bn = colorCorrectPixel("B",ro,go,bo);
+
+                // put
+                rowPtr[j*cn + 0] = bn ; // B
+                rowPtr[j*cn + 1] = gn ; // G
+                rowPtr[j*cn + 2] = rn ; // R
+
+            }
+        }
+
+        normalize(mat_out_float, mat_out_float, 1, 0, NORM_MINMAX);
+        printMatStats("mat_out_float_final",   mat_out_float);
+        Mat mat_out_int = Mat(height, width, CV_8U);
+        mat_out_float.convertTo(mat_out_int, CV_32F, 255);
+        return mat_out_int;
+    }
 
 
     void runMagick(string cmd) {

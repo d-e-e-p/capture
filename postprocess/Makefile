@@ -12,7 +12,8 @@ MAGICK_FLAGS=-fopenmp -Wno-write-strings -I/usr/local/include/ImageMagick-7 -L/u
 CSOURCES= ../libsv/examples/common_cpp/image_processor.cpp
 EXIFOBJ = $(wildcard ../common/exif/*.o)
 
-PROFILE=-g -pg
+#PROFILE=-g -pg
+PROFILE=
 
 #../bin/capture: capture.cpp 
 #	$(CC) -o $@ $< $(CSOURCES) $(CFLAGS)  $(OPENCV_FLAGS) $(PROFILE)
@@ -22,6 +23,7 @@ all: ../bin/postprocess
 
 ../bin/postprocess: postprocess.cpp postprocess.hpp ../common/Imagedata.hpp
 	$(CC) -o $@ $< $(CFLAGS) $(OPENCV_FLAGS) $(EXIFOBJ) $(MAGICK_FLAGS) $(PROFILE)
+	../bin/postprocess --overwrite --verbose --threads 1 --convert raw2jpg /media/sdb2/backup/envy/snappy/fixup_dng/color_correction/may01/raw
 
 watch:
 	while true; do \

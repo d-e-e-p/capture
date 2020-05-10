@@ -17,6 +17,7 @@ struct Options {
     bool overwrite  = false;
     bool verbose    = false;
     bool sample     = false;
+    bool wb_and_cc  = false;
     int  threads    = 4;
 } opt;
 
@@ -55,6 +56,7 @@ void processArgs(int argc, char** argv) {
         {"verbose",     no_argument,        0, 44 },
         {"sample",      no_argument,        0, 45 },
         {"threads",     required_argument,  0, 46 },
+        {"wb_and_cc",   no_argument,        0, 47 },
         {NULL, 0, NULL, 0}
     };
 
@@ -97,6 +99,10 @@ void processArgs(int argc, char** argv) {
          case 46:
             opt.threads = stoi(optarg);
             LOGI << " opt.threads = " << opt.threads;
+            break;
+         case 47:
+            opt.wb_and_cc = true;
+            LOGI << " opt.wb_and_cc = " << opt.wb_and_cc;
             break;
          case ':':
             LOGE << " missing option arg" << argv[optind-1];
@@ -345,7 +351,7 @@ std::vector<fs::path> get_filenames( fs::path path ) {
         is_ext_correct  = file.extension() == "." + g.src_file_ext ;
 
 
-        //LOGV << " file = " << file.string() << " is_matched=" << is_matched << " reqular=" <<  is_regular <<    " : ext=" << is_ext_correct;
+        LOGV << " file = " << file.string() << " is_matched=" << is_matched << " reqular=" <<  is_regular <<    " : ext=" << is_ext_correct;
         if( is_matched and is_not_dotfile and is_regular and is_ext_correct) {
             filenames.push_back( iter->path() );
         }
@@ -416,6 +422,19 @@ vector< pair <fs::path,fs::path> > getAllDirs(void) {
     
 }
 
+int process_raw2jpg(fs::path src, fs::path dst) { 
+
+    Imagedata img;
+    
+    img.loadImage(src);
+    img.dst = dst;
+
+    // TODO : get attr from json sidefile if it exists
+
+    img.writeJpgFromRaw();
+
+}
+
 
 
 
@@ -424,6 +443,7 @@ int process_raw2dng(fs::path src, fs::path dst) {
     Imagedata img;
     
     img.loadImage(src);
+    img.dst = dst;
 
     // hack: raw files don't have attributes so we need to fake them or get them from a side file...
     //img.sidefile_to_attributes(src,dst); 
@@ -436,7 +456,7 @@ int process_raw2dng(fs::path src, fs::path dst) {
         img.fakedata_to_attributes(src);
     }
     */
-    img.writeDng(dst);
+    img.writeDng(dst, opt.wb_and_cc);
 
 }
 
@@ -481,11 +501,12 @@ int process_any2ahe(fs::path src, fs::path dst) {
 int process_any2ann(fs::path src, fs::path dst) { 
 
     Imagedata img;
-    
+
     img.loadImage(src);
     img.getExif();
     img.createAnnoText();
-    img.writeAnnotated(dst, false);
+    img.src = src;
+    img.writeAnnotated(dst, true);
 
 }
 
@@ -516,6 +537,7 @@ indicators::ProgressBar* createProgressBar() {
     return bar;
 }
   
+// process dir at a time
 int process_dir_src2dst(string srcstr , string dststr) {
 
    fs::path src (srcstr); fs::path dst (dststr); 
@@ -529,12 +551,14 @@ int process_dir_src2dst(string srcstr , string dststr) {
 //   if (opt.convert == "jpg2trk") { return process_dir_jpg2trk(src,dst); }
 }
 
+// process file at a time
 // must be a better way to do this in c
 int process_src2dst(string srcstr , string dststr) {
 
    fs::path src (srcstr); fs::path dst (dststr); 
     
    if (opt.convert == "raw2dng") { return process_raw2dng(src,dst); }
+   if (opt.convert == "raw2jpg") { return process_raw2jpg(src,dst); }
    if (opt.convert == "dng2jpg") { return process_dng2any(src,dst); }
    if (opt.convert == "dng2png") { return process_dng2any(src,dst); }
    if (opt.convert == "jpg2ahe") { return process_any2ahe(src,dst); }
@@ -562,9 +586,10 @@ void setupDirs() {
     fs::path file_exe = getExePath();
     fs::path profiledir = file_exe.parent_path().parent_path() / "profiles";
 
-    fp.dng_headerfile   =  profiledir / "dng_header_091065.bin";
+    fp.dng_headerfile   =  profiledir / "dng_header_081100056.bin";
     fp.dt_stylefile     =  profiledir / "darktable.xml";
-    fp.rt_stylefile     =  profiledir / "xrite_apr19.pp3";
+    //fp.rt_stylefile     =  profiledir / "basic_black_apr26_autorgb.pp3";
+    fp.rt_stylefile     =  profiledir / "basic_black_apr26.pp3 ";
 
     LOGI << " using dng header:" << fp.dng_headerfile.string() ;
     LOGV << " using darktable style:" << fp.dt_stylefile.string() ;
@@ -597,7 +622,7 @@ int main(int argc, char** argv ) {
     // operate on dirs if tool allows it
     bool run_dir_dng2any = (opt.convert == "dng2jpg") or (opt.convert == "dng2png");
     bool run_dir_any2ahe = opt.overwrite and ((opt.convert == "jpg2ahe") or (opt.convert == "png2ahe"));
-    bool run_dir_mode = (! opt.sample) and (run_dir_dng2any or run_dir_any2ahe);
+    bool run_dir_mode = (! opt.sample) and (! opt.wb_and_cc) and (run_dir_dng2any or run_dir_any2ahe);
     if (run_dir_mode) {
         auto alldirs = getAllDirs();
         size = alldirs.size();
