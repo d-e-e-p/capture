@@ -294,10 +294,15 @@ class Imagedata{
             }
             // we are responsible for deleting the information when done
             delete info;
-        }
+        } 
         // print exiftool stderr messages
         char *err = s.exiftool->GetError();
         if (err) LOGE << err;
+
+        if (exif.length() == 0) {
+            exif = R"(
+{"basename":"dummy","bpp":16,"command":"command ","comment":"dummy","datalength":835584,"datestamp":"202004241432","delta_ms":100,"expo":100,"fps":3,"gain":0,"header":"Tensorfield Ag (c) 2020 😀","height":544,"src":"camera","steady_clock_ns":1000000000000,"sweep_index":0,"sweep_total":0,"system_clock_ns":1587763925123609152,"text_east":"","text_north":"","width":768})";
+        }
 
         json_to_attributes(exif);
         //LOGI << " sweep_total " << sweep_total ;
@@ -745,37 +750,62 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     #include<cmath>
     float colorCorrectPixel(string RGB, float r, float g, float b) {
 
+    /*
         const float m[3][7] = {
             {2.0420 , 1.3335 , -0.2554 , 2.5708,  0.3313 , -2.4732},
             {0.4303 , 3.1096 ,  0.1063 ,-0.9487,  1.7227 , -0.1972},
             {2.6054 , 0.5803 ,  6.3472 ,-0.8337, -1.5363 ,  5.3990},
          };
+
+    // works well--based on snappy-flat
+    const float m[3][7] = { 
+     { 3.4328 , -1.8594 , -1.0440 , -1.5200 , 1.6588 , 0.3699 , -0.0085 },
+     { -0.8496 , 1.2262 , -0.5005 , 0.0360 , 0.8066 , 0.1036 , 0.1664 },
+     { -0.0066 , -1.1836 , 2.2361 , 0.0992 , 0.0745 , 1.1667 , -0.1906 }
+    };               
+    */
+
+    const float m[3][7] = { 
+     {  3.3420 , -0.8352 , -2.4423 , -1.4195 ,  0.8897 , 1.6165 ,  0.0678 },
+     { -1.4032 ,  2.6204 , -1.6586 ,  0.4133 , -0.2037 , 1.1936 ,  0.2043 },
+     { -0.0363 , -0.2740 ,  1.2202 ,  0.0385 , -0.6503 , 2.2812 , -0.2017 }
+    };               
+
+
+    // TODO: instead of loop do in one step in opencv
+    // Remap to float [0, 1], perform gamma correction
+    //float fGamma = 2.2f;
+    //imgDeBayer.convertTo( imgDeBayer, CV_32FC3, 1. / 4096);//4096-> 2^12 ( 12-Bit)
+    //cv::pow( imgDeBayer, fGamma, imgDeBayer );
+
         const float gamma = 2.2;
+        float rg = pow(r, (1 / gamma));
+        float gg = pow(g, (1 / gamma));
+        float bg = pow(b, (1 / gamma));
 
         float out;
         if (RGB == "R") {
-            out = m[0][0] * r*r + m[0][1] * g*g + m[0][2] * b*b + 
+            out = m[0][0] * rg + m[0][1] * gg + m[0][2] * bg + 
                   m[0][3] * r   + m[0][4] * g   + m[0][5] * b   +
                   m[0][6];
         }
         if (RGB == "G") {
-            out = m[1][0] * r*r + m[1][1] * g*g + m[1][2] * b*b + 
+            out = m[1][0] * rg + m[1][1] * gg + m[1][2] * bg + 
                   m[1][3] * r   + m[1][4] * g   + m[1][5] * b   +
                   m[1][6];
         }
         if (RGB == "B") {
-            out = m[2][0] * r*r + m[2][1] * g*g + m[2][2] * b*b + 
+            out = m[2][0] * rg + m[2][1] * gg + m[2][2] * bg + 
                   m[2][3] * r   + m[2][4] * g   + m[2][5] * b   +
                   m[2][6];
         }
 
         // gamma correct
-        out = pow(out, (1 / gamma));
 
         return out;
     }
 
-    // use ccm to "try" and correct colors
+    // use ccm to "correct" colors
     Mat correctImageColors (Mat mat_in_int) {
 
         // multiplication needs floating
