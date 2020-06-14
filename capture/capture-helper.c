@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <iostream>   
 
 #include <getopt.h>             /* getopt_long() */
 
@@ -41,14 +42,21 @@ struct buffer {
 	size_t  length;
 };
 
+// hardcoded for our application and camera
 char            *dev_name = (char *) "/dev/video0";
 enum io_method   io = IO_METHOD_MMAP;
 int              fd = -1;
+
+
 struct buffer          *buffers;
 unsigned int     n_buffers;
 int		out_buf;
 int              force_format;
 int              frame_count = 70;
+
+// WARNING: making this global assumes all connected cameras have same setting!
+struct v4l2_format fmt;	
+
 
 void errno_exit(const char *s)
 {
@@ -67,7 +75,7 @@ static int xioctl(int fh, unsigned long int request, void *arg)
 	return r;
 }
 
-extern void process_image(void *ptr, int size, struct v4l2_buffer buf);
+extern void process_image(void *ptr, int size, struct v4l2_buffer buf, struct v4l2_pix_format pix);
 static void original_process_image(const void *p, int size)
 {
 	if (out_buf)
@@ -85,6 +93,9 @@ static int read_frame(void)
 	unsigned int i;
 
     startLoopCallback();
+
+	v4l2_pix_format pix = fmt.fmt.pix;
+
 
 	switch (io) {
     LOGV << " io = " << io << " IO_METHOD_READ = " << IO_METHOD_READ;
@@ -105,7 +116,7 @@ static int read_frame(void)
 			}
 		}
 
-		process_image(buffers[0].start, buffers[0].length, buf);
+		process_image(buffers[0].start, buffers[0].length, buf, pix);
 		break;
 
 	case IO_METHOD_MMAP:
@@ -132,7 +143,7 @@ static int read_frame(void)
 
 		assert(buf.index < n_buffers);
 
-		process_image(buffers[buf.index].start, buf.bytesused, buf);
+		process_image(buffers[buf.index].start, buf.bytesused, buf, pix);
 
 		if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
 			errno_exit("VIDIOC_QBUF");
@@ -167,7 +178,7 @@ static int read_frame(void)
 
 		assert(i < n_buffers);
 
-		process_image((void *)buf.m.userptr, buf.bytesused, buf);
+		process_image((void *)buf.m.userptr, buf.bytesused, buf, pix);
 
 		if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
 			errno_exit("VIDIOC_QBUF");
@@ -422,12 +433,146 @@ static void init_userp(unsigned int buffer_size)
 	}
 }
 
+// format functions from v4l2-info.cpp
+//
+
+static std::string num2s(unsigned num, bool is_hex = true)
+{
+        char buf[16];
+
+        if (is_hex)
+                sprintf(buf, "0x%08x", num);
+        else
+                sprintf(buf, "%u", num);
+        return buf;
+}
+
+
+
+std::string fcc2s(__u32 val)
+{
+        std::string s;
+
+        s += val & 0x7f;
+        s += (val >> 8) & 0x7f;
+        s += (val >> 16) & 0x7f;
+        s += (val >> 24) & 0x7f;
+        if (val & (1U << 31))
+                s += "-BE";
+        return s;
+}
+
+
+std::string field2s(int val)
+{
+        switch (val) {
+        case V4L2_FIELD_ANY:
+                return "Any";
+        case V4L2_FIELD_NONE:
+                return "None";
+        case V4L2_FIELD_TOP:
+                return "Top";
+        case V4L2_FIELD_BOTTOM:
+                return "Bottom";
+        case V4L2_FIELD_INTERLACED:
+                return "Interlaced";
+        case V4L2_FIELD_SEQ_TB:
+                return "Sequential Top-Bottom";
+        case V4L2_FIELD_SEQ_BT:
+                return "Sequential Bottom-Top";
+        case V4L2_FIELD_ALTERNATE:
+                return "Alternating";
+        case V4L2_FIELD_INTERLACED_TB:
+                return "Interlaced Top-Bottom";
+        case V4L2_FIELD_INTERLACED_BT:
+                return "Interlaced Bottom-Top";
+        default:
+                return "Unknown (" + num2s(val) + ")";
+        }
+}
+
+std::string colorspace2s(int val)
+{
+        switch (val) {
+        case V4L2_COLORSPACE_DEFAULT:
+                return "Default";
+        case V4L2_COLORSPACE_SMPTE170M:
+                return "SMPTE 170M";
+        case V4L2_COLORSPACE_SMPTE240M:
+                return "SMPTE 240M";
+        case V4L2_COLORSPACE_REC709:
+                return "Rec. 709";
+        case V4L2_COLORSPACE_BT878:
+                return "Broken Bt878";
+        case V4L2_COLORSPACE_470_SYSTEM_M:
+                return "470 System M";
+        case V4L2_COLORSPACE_470_SYSTEM_BG:
+                return "470 System BG";
+        case V4L2_COLORSPACE_JPEG:
+                return "JPEG";
+        case V4L2_COLORSPACE_SRGB:
+                return "sRGB";
+        case V4L2_COLORSPACE_OPRGB:
+                return "opRGB";
+        case V4L2_COLORSPACE_DCI_P3:
+                return "DCI-P3";
+        case V4L2_COLORSPACE_BT2020:
+                return "BT.2020";
+        case V4L2_COLORSPACE_RAW:
+                return "Raw";
+        default:
+                return "Unknown (" + num2s(val) + ")";
+        }
+}
+
+std::string xfer_func2s(int val)
+{
+        switch (val) {
+        case V4L2_XFER_FUNC_DEFAULT:
+                return "Default";
+        case V4L2_XFER_FUNC_709:
+                return "Rec. 709";
+        case V4L2_XFER_FUNC_SRGB:
+                return "sRGB";
+        case V4L2_XFER_FUNC_OPRGB:
+                return "opRGB";
+        case V4L2_XFER_FUNC_DCI_P3:
+                return "DCI-P3";
+        case V4L2_XFER_FUNC_SMPTE2084:
+                return "SMPTE 2084";
+        case V4L2_XFER_FUNC_SMPTE240M:
+                return "SMPTE 240M";
+        case V4L2_XFER_FUNC_NONE:
+                return "None";
+        default:
+                return "Unknown (" + num2s(val) + ")";
+        }
+}
+
+
+std::string quantization2s(int val)
+{
+        switch (val) {
+        case V4L2_QUANTIZATION_DEFAULT:
+                return "Default";
+        case V4L2_QUANTIZATION_FULL_RANGE:
+                return "Full Range";
+        case V4L2_QUANTIZATION_LIM_RANGE:
+                return "Limited Range";
+        default:
+                return "Unknown (" + num2s(val) + ")";
+        }
+}
+
+
+
+
 void init_device(void)
 {
 	struct v4l2_capability cap;
 	struct v4l2_cropcap cropcap;
 	struct v4l2_crop crop;
-	struct v4l2_format fmt;
+	//struct v4l2_format fmt;
 
 	if (-1 == xioctl(fd, VIDIOC_QUERYCAP, &cap)) {
 		if (EINVAL == errno) {
@@ -510,6 +655,7 @@ void init_device(void)
 			errno_exit("VIDIOC_G_FMT");
 	}
 
+
 	switch (io) {
 	case IO_METHOD_READ:
 		init_read(fmt.fmt.pix.sizeimage);
@@ -523,6 +669,20 @@ void init_device(void)
 		init_userp(fmt.fmt.pix.sizeimage);
 		break;
 	}
+
+
+	v4l2_pix_format pix = fmt.fmt.pix;
+	LOGI << "\twidth        : " <<  std::right << std::setw(8) << pix.width;
+    LOGI << "\theight       : " <<  std::right << std::setw(8) << pix.height;
+    LOGI << "\tbytesperline : " <<  std::right << std::setw(8) << pix.bytesperline;
+    LOGI << "\tsizeimage    : " <<  std::right << std::setw(8) << pix.sizeimage;
+    LOGI << "\tpixelformat  : " <<  std::right << std::setw(8) << fcc2s(pix.pixelformat);
+    LOGV << "\tfield        : " <<  std::right << std::setw(8) << field2s(pix.field); 
+    LOGV << "\tcolorspace   : " <<  std::right << std::setw(8) << colorspace2s(pix.colorspace); 
+    LOGV << "\txfer_func    : " <<  std::right << std::setw(8) << xfer_func2s(pix.xfer_func);
+    LOGV << "\tquantization : " <<  std::right << std::setw(8) << quantization2s(pix.quantization);
+
+
 }
 
 void close_device(void)
@@ -787,6 +947,59 @@ int set_fps(float fps) {
     long frame_rate = 1000000 * fps;
     return v4l2_s_ctrl(id.frame_rate, frame_rate);
 }
+
+// https://stackoverflow.com/questions/15358920/get-v4l2-video-devices-maximum-resolution
+
+int get_resolutions(void) {
+
+    struct v4l2_frmsizeenum frmsize;
+    struct v4l2_frmivalenum frmival;
+
+    memset(&frmsize, 0xff, sizeof(frmsize));
+    frmsize.pixel_format = fmt.fmt.pix.pixelformat;
+
+    frmsize.index = 0;
+    while (ioctl(fd, VIDIOC_ENUM_FRAMESIZES, &frmsize) >= 0) {
+        if (frmsize.type == V4L2_FRMSIZE_TYPE_DISCRETE) {
+            LOGV << "d resolution" << frmsize.index << " : " << 
+                frmsize.discrete.width << " X " << frmsize.discrete.height;
+        } else if (frmsize.type == V4L2_FRMSIZE_TYPE_STEPWISE) {
+            LOGV << "s resolution" << frmsize.index << " : " << 
+                frmsize.stepwise.max_width << " X " << frmsize.stepwise.max_height;
+        }
+        frmsize.index++;
+     }
+
+     return frmsize.index;
+}
+
+int set_resolution(int num) {
+
+    struct v4l2_frmsizeenum frmsize;
+    struct v4l2_frmivalenum frmival;
+	struct v4l2_pix_format pix = fmt.fmt.pix;
+
+    memset(&frmsize, 0xff, sizeof(frmsize));
+    frmsize.pixel_format = pix.pixelformat;
+
+    std::string selected;
+    frmsize.index = 0;
+    while (ioctl(fd, VIDIOC_ENUM_FRAMESIZES, &frmsize) >= 0) {
+        if (frmsize.index == num) {
+            pix.width  = frmsize.discrete.width;
+            pix.height = frmsize.discrete.height;
+            selected = " [selected] ";
+        } else{
+            selected = " ";
+        }
+        LOGI << " res" << frmsize.index << " : " << 
+            std::right << std::setw(5) << frmsize.discrete.width << " X " << 
+            std::right << std::setw(5) << frmsize.discrete.height << selected ;
+        frmsize.index++;
+     }
+
+}
+
 
 
 

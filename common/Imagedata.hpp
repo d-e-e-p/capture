@@ -81,13 +81,13 @@ class Imagedata{
     float focus3 = 0;
     float focus4 = 0;
 
-    int width  = 728;
-    int height = 544;
+    int width  = 0;
+    int height = 0;
 
     int bpp    = 16; // bits per pixel
     int pixel_depth = bpp / CHAR_BIT;
-    int line_width  = width * pixel_depth;
-    int datalength  = line_width * height;
+    int bytesperline  = width * pixel_depth;
+    int datalength  = bytesperline * height;
 
     string comment;
     string text_north;
@@ -378,15 +378,129 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 
 }
 */
+    void writeDngAttr(fs::path dngname) {
 
+        string imageinfo = attributes_to_json(0);
+        LOGV << imageinfo;
+
+        Exiv2::ExifData exifData;
+        exifData["Exif.Image.UniqueCameraModel"] = imageinfo;
+        Exiv2::Image::AutoPtr image = Exiv2::ImageFactory::open(dngname.c_str());
+        try {
+            image->setExifData(exifData);
+            image->writeMetadata();
+        } catch (Exiv2::AnyError& e) {
+            LOGE << "Caught Exiv2 exception '" << e << "'";
+            exit(-1);
+        }
+
+    }
+
+    void writeDngAttrExiftool(fs::path dngname) {
+
+        ExifTool *et = new ExifTool();
+        //auto et = s.exiftool;
+
+        string imageinfo = attributes_to_json(0);
+
+        et->SetNewValue("UniqueCameraModel",            imageinfo.c_str());
+        et->SetNewValue("DNGVersion",                   "1.4.0.0");
+        et->SetNewValue("DNGBackwardVersion",           "1.3.0.0");
+        et->SetNewValue("EXIF:SubfileType",             "Full-resolution Image");
+        et->SetNewValue("DNGBackwardVersion",           "1.3.0.0");
+        et->SetNewValue("EXIF:SubfileType",             "Full-resolution Image");
+        et->SetNewValue("PhotometricInterpretation",    "Color Filter Array");
+        et->SetNewValue("IFD0:CFARepeatPatternDim",     "2 2");
+        et->SetNewValue("IFD0:CFAPattern2",             "0 1 1 2");
+        et->SetNewValue("Orientation",                  "Horizontal");
+        et->SetNewValue("BitsPerSample",                "16");
+        et->SetNewValue("SamplesPerPixel",              "1");
+        et->SetNewValue("Make",                         "__SNAPPY__");
+        et->SetNewValue("Model",                        "__WEED__");
+        et->SetNewValue("ColorMatrix1",                 "1 0 0 0 1 0 0 0 1");
+        et->SetNewValue("ColorMatrix2",                 "1 0 0 0 1 0 0 0 1");
+        et->SetNewValue("MakerNotes:WB_RBLevels",       "1 1 1 1");
+        et->SetNewValue("WB_RBLevels",                  "1 1 1 1");
+        et->SetNewValue("AnalogBalance",                "1 1 1");
+        et->SetNewValue("IFD0:CalibrationIlluminant1",  "Standard Light A");
+        et->SetNewValue("IFD0:CalibrationIlluminant2",  "D65");
+        et->SetNewValue("IFD0:CalibrationIlluminant1",  "Standard Light A");
+        et->SetNewValue("IFD0:CalibrationIlluminant2",  "D65");
+
+
+        // write exif to file 
+        et->WriteInfo(dngname.c_str(), "-overwrite_original_in_place");
+
+        bool debug_exif = true;
+        if (debug_exif) {
+            // wait for exiftool to finish writing
+            int result = et->Complete(10);
+
+            if (result > 0) {
+                // checking either the number of updated images or the number of update
+                // errors should be sufficient since we are only updating one file,
+                // but check both for completeness
+                int n_updated = et->GetSummary(SUMMARY_IMAGE_FILES_UPDATED);
+                int n_errors = et->GetSummary(SUMMARY_FILE_UPDATE_ERRORS);
+                if (n_updated == 1 && n_errors <= 0) {
+                    //LOGV << "Exif Success!"
+                } else {
+                    LOGE << "exiftool problem";
+                }
+                // print any exiftool messages
+                char *out = et->GetOutput();
+                if (out) LOGV << out;
+                char *err = et->GetError();
+                if (err) LOGE << err;
+            } else {
+                LOGE << "Error executing exiftool !";
+            }
+        }
+        delete et;
+
+    }
+
+    // assume input data is in raw format
+    int writeJson(fs::path jsonname) {
+        string imageinfo = attributes_to_json(4);
+        LOGV << "writing to : " << jsonname.string() ;
+        //fs::remove(dngname);
+        ofstream outfile (jsonname);
+        outfile << imageinfo;
+        outfile.close();
+    }
+
+
+    // assume input data is in raw format
+    int writeDng(fs::path dngname, bool wb_and_cc) {
+
+        Mat mat_crop(height, width, CV_16U, data, bytesperline);
+        printMatStats("mat_crop", mat_crop);
+
+        vector<int> params;
+        params.push_back(IMWRITE_TIFF_COMPRESSION);
+        params.push_back(1/*COMPRESSION_NONE*/);
+        vector<uchar> buffer;
+        cv::imencode(".tiff", mat_crop, buffer, params);
+
+        LOGV << "writing to : " << dngname.string() ;
+        //fs::remove(dngname);
+        ofstream outfile (dngname,ofstream::binary);
+        outfile.write (reinterpret_cast<const char*>(&buffer[0]), buffer.size());
+        outfile.close();
+
+        // now add dng exif attributes
+        writeDngAttr(dngname);
+
+    }
    
     // assume input data is in raw format!
-    int writeDng(fs::path dngname, bool wb_and_cc) {
+    int writeDngOld(fs::path dngname, bool wb_and_cc) {
 
         // assume g.dng_headerdata is loaded 
         assert(s.dng_headerdata != nullptr);
 
-        string imageinfo = attributes_to_json();
+        string imageinfo = attributes_to_json(0);
         LOGV << "imageinfo = " << imageinfo; 
         // write attributes
         // reset image size i
@@ -424,8 +538,8 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         printMatStats("mat_crop", mat_crop);
         //update globals
         width = new_width;
-        line_width = width * pixel_depth;
-        datalength = line_width * height;
+        bytesperline = width * pixel_depth;
+        datalength = bytesperline * height;
          
         LOGV << "copy = " << mat_crop.size() << " cont = " << mat_crop.isContinuous() ;
         
@@ -499,6 +613,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         bpp  =              jin["bpp"];
         width  =            jin["width"];
         height  =           jin["height"];
+        bytesperline  =     jin["bytesperline"];
         datalength  =       jin["datalength"];
         comment =           jin["comment"];
         text_north =        jin["text_north"];
@@ -508,7 +623,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     
     }
 
-    string attributes_to_json() {
+    string attributes_to_json(int pad) {
 
         json jout;
 
@@ -527,13 +642,14 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         jout["bpp"]=                bpp ;
         jout["width"]=              width ;
         jout["height"]=             height ;
+        jout["bytesperline"]=       bytesperline ;
         jout["datalength"]=         datalength ;
         jout["comment"]=            comment;
         jout["text_north"]=         text_north;
         jout["text_east"]=          text_east;
         jout["command"]=            command;
 
-        return jout.dump();
+        return jout.dump(pad);
     }
 
 
@@ -667,7 +783,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     void printMatStats(string name, Mat M) {
         double min, max;
 
-        if (false)
+        if (true)
             return;
 
         minMaxLoc(M, &min, &max);
@@ -688,27 +804,16 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 
 
     char* crop_wb_cc(char* indata, bool wb_and_cc) {
-        //int bpp = 16;
-        //int height = 544;
-        //int pixel_depth = bpp / CHAR_BIT;
 
-        int old_width  = 768;
-        int new_width = 728;
-        int step = old_width * pixel_depth;
-
-        Mat mat_crop(height, new_width, CV_16U, indata, step);
+        // one line to create opencv image from foreign data
+        Mat mat_crop(height, width, CV_16U, indata, bytesperline);
         printMatStats("mat_crop", mat_crop);
-        //LOGV << "copy = " << out.size() << " cont = " << out.isContinuous() ;
+        LOGV << "copy = " << mat_crop.size() << " cont = " << mat_crop.isContinuous() ;
 
-        Mat mat_out(height, new_width, CV_16UC1);
+        Mat mat_out(height, width, CV_16UC1);
         mat_crop.copyTo(mat_out);
         printMatStats("mat_out", mat_out);
 
-
-        //update globals
-        width = new_width;
-        line_width = width * pixel_depth;
-        datalength = line_width * height;
 
         char* res = new char [datalength];
         memcpy(res, mat_out.data, datalength);
@@ -722,20 +827,20 @@ int writeAnnotated(Imagedata image, fs::path dst) {
          //reshape the size of data to get rid of band if needed ... assume width = 768 or 728
 
         int old_width = 768; // or take from current width var?
-        int old_line_width = old_width * pixel_depth;
-        int old_datalength = old_line_width * height;
+        int old_bytesperline = old_width * pixel_depth;
+        int old_datalength = old_bytesperline * height;
 
         int new_width = 728;
-        int new_line_width = new_width * pixel_depth;
-        int new_datalength = new_line_width * height;
+        int new_bytesperline = new_width * pixel_depth;
+        int new_datalength = new_bytesperline * height;
 
           vector<char> indata (old_data, old_data + old_datalength); // fill vec with data
           vector<char> outdata(old_data, old_data + new_datalength);
-          for (int x = 0; x < old_line_width ; x++) {
+          for (int x = 0; x < old_bytesperline ; x++) {
               for (int y=0;y < height ; y++) {
-                  if (x < new_line_width) {
-                      int old_pixel = x + y * old_line_width;
-                      int new_pixel = x + y * new_line_width;
+                  if (x < new_bytesperline) {
+                      int old_pixel = x + y * old_bytesperline;
+                      int new_pixel = x + y * new_bytesperline;
                       outdata.at(new_pixel) = indata.at(old_pixel);
                   }
               }

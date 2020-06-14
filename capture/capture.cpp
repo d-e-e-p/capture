@@ -16,6 +16,7 @@
 struct Options {
     int  minutes = 0;
     int  frames = 1000;
+    string resolution = "med";
     int  gain = 0;
     int  expo = 500; // max = 8256
     int  fps = 0;
@@ -79,6 +80,7 @@ struct FilePaths {
     fs::path folder_raw ;
     fs::path folder_dng ;
     fs::path folder_jpg ;
+    fs::path folder_json ;
 
     fs::path file_current_dng = folder_data / "current.dng";
     fs::path file_current_jpg = folder_data / "current.jpg";
@@ -144,6 +146,7 @@ void setMinMaxGain (ICamera *camera) ;
 void setMinMaxExposure (ICamera *camera) ;
 void setGain (int value) ;
 void setExposure (int value) ;
+void setResolution (string resolution) ;
 void takeDummyPicsToMakeSettingsStick(void) ;
 void varyGain (void) ;
 void varyExposure (void) ;
@@ -154,7 +157,7 @@ void saveJpg(Imagedata* image);
 void cleanUp (void) ;
 void setupLoop(void);
 void endLoop(void);
-int endLoopCalback(void *ptr, int size, struct v4l2_buffer buf);
+int endLoopCallback(void *ptr, int size, struct v4l2_buffer buf, struct v4l2_pix_format pix);
 void syncGainExpo(void);
 void buttonCallback(int state, void *font);
 void setupCapture();
@@ -202,28 +205,31 @@ void stopCapture() {
 }
 
 void PrintHelp() {
-    LOGI <<
-       "--minutes <n>:       set num of minutes to capture\n"
-       "--frames <n>:        set number of frames to capture\n"
-       "--gain <n>:          set gain\n"
-       "--exposure <n>:      set exposure\n"
-       "--fps <n>:           set rate limit on frames to capture per sec\n"
-       "--vary_gain:         sweep gain from min to max\n"
-       "--min_gain:          min gain for sweep\n"
-       "--max_gain:          max gain for sweep\n"
-       "--vary_expo:         sweep exposure from min to max\n"
-       "--min_expo:          min gain for sweep\n"
-       "--max_expo:          max gain for sweep\n"
-       "--vary_both:         sweep both gain and exposure from min to max\n"
-       "--nosave:            no saving any images--just display\n"
-       "--nojpg:             no jpeg or display--just raw image dump\n"
-       "--alljpg:            capture jpg for every image\n"
-       "--noexif:            no exif metadata in jpeg\n"
-       "--comment:           specify a comment to remember the run\n"
-       "--display:           display window\n"
-       "--interactive        display window and only save on keypress\n"
-       "--verbose:           verbose\n"
-       "--help:              show help\n";
+    LOGI << R"(
+    capture 
+         --minutes <n>:       set num of minutes to capture
+         --frames <n>:        set number of frames to capture
+         --resolution (low|std|high)    
+         --gain <n>:          set gain
+         --exposure <n>:      set exposure
+         --fps <n>:           set rate limit on frames to capture per sec
+         --vary_gain:         sweep gain from min to max
+         --min_gain:          min gain for sweep
+         --max_gain:          max gain for sweep
+         --vary_expo:         sweep exposure from min to max
+         --min_expo:          min gain for sweep
+         --max_expo:          max gain for sweep
+         --vary_both:         sweep both gain and exposure from min to max
+         --nosave:            no saving any images--just display
+         --nojpg:             no jpeg or display--just raw image dump
+         --alljpg:            capture jpg for every image
+         --noexif:            no exif metadata in jpeg
+         --comment:           specify a comment to remember the run
+         --display:           display window
+         --interactive        display window and only save on keypress
+         --verbose:           verbose
+         --help:              show help
+    )";
     exit(1);
 }
 
@@ -284,18 +290,20 @@ void setupDirs() {
     LOGI << g.header ;
     LOGI << opt.comment ;
 
-    fp.folder_raw = fp.folder_base / "raw"; fs::create_directories(fp.folder_raw);
-    fp.folder_dng = fp.folder_base / "dng"; fs::create_directories(fp.folder_dng);
-    fp.folder_jpg = fp.folder_base / "jpg"; fs::create_directories(fp.folder_jpg);
+    fp.folder_raw  = fp.folder_base / "raw" ; fs::create_directories(fp.folder_raw);
+    fp.folder_dng  = fp.folder_base / "dng" ; fs::create_directories(fp.folder_dng);
+    fp.folder_jpg  = fp.folder_base / "jpg" ; fs::create_directories(fp.folder_jpg);
+    fp.folder_json = fp.folder_base / "json"; fs::create_directories(fp.folder_json);
 
     LOGI << " using dng header:" << fp.dng_headerfile.string() ;
     LOGV << " using darktable style:" << fp.dt_stylefile.string() ;
     LOGV << " using rawtherapee style:" << fp.rt_stylefile.string() ;
 
     LOGI << "results under:" << fp.folder_base.string() ;
-    LOGV << "   raw under : "  << fp.folder_raw.string();
-    LOGV << "   dng under : "  << fp.folder_dng.string();
-    LOGV << "   jpg under : "  << fp.folder_jpg.string();
+    LOGV << "   raw  under : "  << fp.folder_raw.string();
+    LOGV << "   json under : "  << fp.folder_json.string();
+    LOGV << "   dng  under : "  << fp.folder_dng.string();
+    LOGV << "   jpg  under : "  << fp.folder_jpg.string();
 
 }
 
@@ -357,15 +365,16 @@ void defineColorCorrectionMatrix() {
 
 }
 
-void setupCamera() {
+void setupCamera(void) {
 
     // set default gain and exposure
+    setResolution(opt.resolution);
     setGain(opt.gain);
     setExposure(opt.expo);
     set_fps(200);
 
     fs::path file_camera_settings = fp.folder_base / "camera.settings";
-    string command = "/usr/local/bin/v4l2-ctl --verbose --all > " + file_camera_settings.string();
+    string command = "/usr/local/bin/v4l2-ctl --verbose --all --list-formats-ext > " + file_camera_settings.string();
     //system( (const char *) command.c_str());
     LOGI << command;
     LOGI << exec(command);
@@ -676,10 +685,10 @@ void showImage(Imagedata* image) {
 #include <sys/stat.h>
 #include <unistd.h>
 
-void process_image(void *ptr, int size, struct v4l2_buffer buf) {
+void process_image(void *ptr, int size, struct v4l2_buffer buf, struct v4l2_pix_format pix) {
     //if (out_buf)
     //   fwrite(p, size, 1, stdout);
-    endLoopCalback(ptr,size, buf);
+    endLoopCallback(ptr,size, buf, pix);
     //fflush(stderr);
     //fprintf(stderr, ".");
     //fflush(stdout);
@@ -739,7 +748,8 @@ void startLoopCallback( void ) {
     return;
 }
 
-int endLoopCalback( void *ptr, int datalength, struct v4l2_buffer buf ) {
+
+int endLoopCallback( void *ptr, int datalength, struct v4l2_buffer buf, struct v4l2_pix_format pix ) {
     if (lp.num_of_dummy_pics > 0) {
         // skip advancing on this round
         return(0);
@@ -747,9 +757,13 @@ int endLoopCalback( void *ptr, int datalength, struct v4l2_buffer buf ) {
 
    // actually store the image
    Imagedata *image = new Imagedata;
-   image->datalength = datalength;
-   image->height = 544;
-   image->width = image->datalength / ( image->height * image->pixel_depth);
+   image->width        = pix.width;
+   image->height       = pix.height;
+   image->bytesperline = pix.bytesperline;
+   image->datalength   = pix.sizeimage;
+   image->pixel_depth  = 16;	// hardcoded for now..
+
+   //image->width = image->datalength / ( image->height * image->pixel_depth);
    // TODO: do we really need memcpy?
    image->data = new char [image->datalength];
    memcpy(image->data,ptr,image->datalength);
@@ -870,13 +884,16 @@ void endLoop(void) {
 void saveDng(Imagedata* image) {
 
     fs::path file_dng = fp.folder_dng / (image->basename + ".dng");
-	image->writeDng(file_dng);
+	image->writeDng(file_dng, false);
 }
 
 void saveRaw(Imagedata* image) {
 
     fs::path file_raw = fp.folder_raw / (image->basename + ".raw");
 	image->writeRaw(file_raw);
+
+    fs::path file_json = fp.folder_json / (image->basename + ".json");
+	image->writeJson(file_json);
 }
 
 // different from others because it might be threaded out so needs a 
@@ -893,7 +910,7 @@ void saveJpg(Imagedata* image) {
     // race condition possible ... dng should be written before jpg
     // TODO: store in image if dng is written
     if (! fs::exists(file_dng)) {
-        image->writeDng(file_dng);
+        image->writeDng(file_dng, false);
     }
 
     // make a shallow copy for jpg and return...this could take a while
@@ -976,6 +993,7 @@ void processArgs(int argc, char** argv) {
     enum Option {
         OptMinutes,
         OptFrames,
+        OptResolution,
         OptGain,
         OptExposure,
         OptFps,
@@ -998,6 +1016,7 @@ void processArgs(int argc, char** argv) {
     static struct option long_opts[] = {
         {"minutes",       required_argument,  0,    OptMinutes },
         {"frames",        required_argument,  0,    OptFrames },
+        {"resolution",    required_argument,  0,    OptResolution },
         {"gain",          required_argument,  0,    OptGain },
         {"exposure",      required_argument,  0,    OptExposure },
         {"fps",           required_argument,  0,    OptFps },
@@ -1046,6 +1065,10 @@ void processArgs(int argc, char** argv) {
         case OptFrames:
             opt.frames = stoi(optarg);
             LOGI << "Option: Frames set to: " << opt.frames ;
+            break;
+        case OptResolution:
+            opt.resolution = string(optarg);
+            LOGI << "Option: Resolution set to: " << opt.resolution ;
             break;
         case OptGain:
             opt.gain = stoi(optarg);
@@ -1278,6 +1301,63 @@ void setGain (int value) {
         }
     }
 
+
+}
+
+void setResolution (string resolution) {
+
+
+    // returns number of options, eg 1 if only one option 3 if low/med/high options exist
+    // assume options are in high to low resolution order
+    int resolution_options = get_resolutions();
+
+    map<string, int> str_to_num;
+
+    switch(resolution_options) {
+        case 1 :
+            str_to_num["low"]   = 0;
+            str_to_num["med"]   = 0;
+            str_to_num["high"]  = 0;
+            break;
+        case 2 :
+            str_to_num["low"]   = 1;
+            str_to_num["med"]   = 0;
+            str_to_num["high"]  = 0;
+            break;
+        case 3 :
+            str_to_num["low"]   = 2;
+            str_to_num["med"]   = 1;
+            str_to_num["high"]  = 0;
+            break;
+        default :
+            str_to_num["low"]    = 3;
+            str_to_num["med"]    = 2;
+            str_to_num["high"]   = 1;
+            str_to_num["super"]  = 0;
+            break;
+    }
+
+
+    if (resolution_options > 4) {
+        LOGW << "IGNORING LOW RES OPTIONS!! resolution_options = " << resolution_options;
+    }
+
+    // make sure key exists...otherwise just ignore and set to 0
+    int selected_resolution_option;
+    if ( str_to_num.find(resolution) == str_to_num.end() ) {
+        // not found
+        LOGE << " resolution not found : " << resolution;
+        for(map<string,int>::iterator it = str_to_num.begin(); it != str_to_num.end(); ++it) {
+          LOGE << "   valid option: " << it->first ;
+        }
+        LOGE << " just using option = 0 ";
+        selected_resolution_option = 0;
+    } else {
+        // found
+        selected_resolution_option = str_to_num[resolution];
+    }
+
+   set_resolution(selected_resolution_option);
 
 }
 

@@ -115,6 +115,8 @@ extern  void usage(FILE *fp, int argc, char **argv);
 long get_gain(void) ;
 long get_expo(void) ;
 float get_fps(void) ;
+int get_resolutions(void);
+int set_resolution(int);
 int set_gain(long value) ;
 int set_expo(long value) ;
 int set_fps(float value) ;

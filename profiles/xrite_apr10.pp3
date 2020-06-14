@@ -162,7 +162,7 @@ Uniformity=5
 
 [White Balance]
 Enabled=true
-Setting=Auto
+Setting=autold
 Temperature=4878
 Green=0.440
 Equal=1
@@ -586,7 +586,7 @@ LabRegionsShowMask=-1
 [RAW]
 DarkFrame=/szeva
 DarkFrameAuto=false
-FlatFieldFile=/home/user/build/tensorfield/snappy/profiles/flatfield_apr09_01.dng
+FlatFieldFile=
 FlatFieldAutoSelect=false
 FlatFieldBlurRadius=32
 FlatFieldBlurType=Area Flatfield

@@ -68,6 +68,7 @@ void metadata_to_json(const rs2::frame& frame, const std::string& filename)
         height = depth.get_height();
         // Query the distance from the camera to the object in the center of the image
         dist_to_center = depth.get_distance(width / 2, height / 2);
+        //cout << "d = " << dist_to_center << "\n";
         /*
          auto depth_stream = selection.get_stream(RS2_STREAM_DEPTH)
                              .as<rs2::video_stream_profile>();
@@ -88,10 +89,10 @@ rs2_distortion model = i.model;
     json.open(filename);
 
     json << "{\n";
-    json << "stream"_q << ":," << "\"" << stream << "\"" << ",\n";
-    json << "width"_q << ":,"  << width << ",\n";
-    json << "height"_q << ":," << height << ",\n";
-    json << "dist_to_center"_q << ":," << dist_to_center << ",\n";
+    json << "stream"_q << ":" << "\"" << stream << "\"" << ",\n";
+    json << "width"_q << ":"  << width << ",\n";
+    json << "height"_q << ":" << height << ",\n";
+    json << "dist_to_center"_q << ":" << dist_to_center << ",\n";
 
     // Record all the available metadata attributes
     for (size_t i = 0; i < RS2_FRAME_METADATA_COUNT; i++)
@@ -139,9 +140,9 @@ int main() {
 
     cout << "begin config\n";
     //Add desired streams to configuration
-    cfg.enable_stream(RS2_STREAM_COLOR,      1280,  720, RS2_FORMAT_BGR8, 6);
-    cfg.enable_stream(RS2_STREAM_DEPTH,      1280,  720, RS2_FORMAT_Z16,  6);
-    cfg.enable_stream(RS2_STREAM_INFRARED,   1280,  720, RS2_FORMAT_BGR8, 6);
+    cfg.enable_stream(RS2_STREAM_COLOR,      1280,  720, RS2_FORMAT_BGR8, 30);
+    cfg.enable_stream(RS2_STREAM_DEPTH,      1280,  720, RS2_FORMAT_Z16,  30);
+    cfg.enable_stream(RS2_STREAM_INFRARED,   1280,  720, RS2_FORMAT_BGR8, 30);
     cout << "end config\n";
 
     //Instruct pipeline to start streaming with the requested configuration
@@ -168,22 +169,52 @@ int main() {
     //advanced.load_json(str);
     cout << "disparity set \n";
 
+    // see https://github.com/IntelRealSense/librealsense/wiki/API-How-To#controlling-the-laser
+    rs2::device selected_device = dev;
+
+    auto depth_sensor = selected_device.first<rs2::depth_sensor>();
+    if (depth_sensor.supports(RS2_OPTION_EMITTER_ENABLED)) {
+        depth_sensor.set_option(RS2_OPTION_EMITTER_ENABLED, 1.f); // Enable emitter
+    }
+    if (depth_sensor.supports(RS2_OPTION_LASER_POWER)) {
+        // Query min and max values:
+        auto range = depth_sensor.get_option_range(RS2_OPTION_LASER_POWER);
+        depth_sensor.set_option(RS2_OPTION_LASER_POWER, range.max); // Set max power
+    }
+
+    depth_sensor.set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 1); //
+
     // Camera warmup - dropping several first frames to let auto-exposure stabilize
     rs2::frameset frames;
    //Wait for all configured streams to produce a frame
+    cout << "capture frames to set auto expo \n";
     for(int i = 0; i < 30; i++) {
         frames = pipe.wait_for_frames();
     }
 
+    auto color_sensor = selected_device.first<rs2::color_sensor>();
+    float exposure = color_sensor.get_option(RS2_OPTION_EXPOSURE);
+    float gain = color_sensor.get_option(RS2_OPTION_GAIN);
+    cout << "auto gain = " << gain << " expo = " << exposure <<  "\n";
+
+    /*
+    exposure *= 0.5;
+    gain *= 2.0;
+    frames = pipe.wait_for_frames();
+    cout << "disable auto exposure\n";
+    color_sensor.set_option(RS2_OPTION_EXPOSURE, exposure);
+    color_sensor.set_option(RS2_OPTION_GAIN, gain );
+    cout << "set  gain = " << gain << " expo = " << exposure <<  "\n";
+    */
+
     int i = 0;
     char buff[BUFSIZ];
     while(1) {
+        if ((i % 10) == 0)
+            cout << "." << flush;
         frames = pipe.wait_for_frames();
         snprintf(buff, sizeof(buff), "img%0*d", 5, i++);
         string basename = buff;
-        if ((i % 10) == 0) {
-            cout << "." << flush;
-        }
 
         //Get each frame
         rs2::frame infra_data = frames.first(RS2_STREAM_INFRARED);

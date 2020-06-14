@@ -15,7 +15,8 @@ MAGICK_FLAGS=-fopenmp -Wno-write-strings -I/usr/local/include/ImageMagick-7 -L/u
 CSOURCES= ../libsv/examples/common_cpp/image_processor.cpp
 EXIFOBJ = ../common/exif/ExifTool.o ../common/exif/ExifToolPipe.o ../common/exif/TagInfo.o
 
-PROFILE=-g -pg
+#PROFILE=-g -pg
+PROFILE=
 
 
 #../bin/capture: capture.cpp 
@@ -38,6 +39,7 @@ capture-helper.o: capture-helper.c
 watch:
 	while true; do \
 		make all; \
+		../bin/capture --frames 10 --nojpg --comment "new camera" ; \
 		inotifywait -e close_write capture.cpp capture.hpp capture-helper.c ../common/Imagedata.hpp; \
 	done
 
