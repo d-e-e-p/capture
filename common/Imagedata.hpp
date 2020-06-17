@@ -41,6 +41,11 @@ namespace fs=std::experimental::filesystem;
 //for parsing args 
 #include "boost/program_options/parsers.hpp"
 
+// libtiff
+#include <tiffio.h>
+#include <tiffio.hxx>
+
+
 // fake attributes
 //#include "../common/attr_0411.hpp"
 //#include "../common/attr_comment_0411.hpp"
@@ -90,11 +95,13 @@ class Imagedata{
     int datalength  = bytesperline * height;
 
     string comment;
+    string command;
+
     string text_north;
     string text_south;
     string text_east;
 
-    string command;
+    bool dont_delete_me_yet = false;
 
     // share setup with all object members
     static struct Setup {
@@ -124,6 +131,16 @@ class Imagedata{
 
     //Constructor
     Imagedata() {
+        data = nullptr;
+    }
+
+    // fake out copy constructor so we can use default copy...
+    Imagedata* cloneobj() {
+        Imagedata *that = new Imagedata;
+        that = this; // shallow copy....too much work to write assignment operator in class
+        that->data = new char [datalength];
+        memcpy(that->data, data, datalength);
+        return that;
     }
 
     // HACK: just use filename to construct fake data
@@ -269,6 +286,7 @@ class Imagedata{
             command = "darktable-cli --bpp 8 " + src +  " " + s.dt_stylefile + " " + dst;
         }
         LOGV << "cmd: " << command ;
+        LOGV << "run_threaded: " << run_threaded ;
         if (run_threaded) {
             chrono::nanoseconds ns(1);
             auto status = s.job_queue.wait_for(ns);
@@ -277,6 +295,38 @@ class Imagedata{
             }
         } else {
             runThreadedCommand(command);
+        }
+    }
+
+    void writeDngAndJpgString(string file_dng, string file_jpg,  bool run_threaded=false ) {
+        LOGV << "start writeDngAndJpgString: " << file_jpg << " run_threaded = " << run_threaded;
+        writeDngAndJpg(file_dng, file_jpg, run_threaded);
+    }
+
+    // launch and return if threaded
+    // WARNING: async doesn't work with files declared as fs::path
+    void writeDngAndJpg(fs::path file_dng, fs::path file_jpg,  bool run_threaded=true, bool run_rawtherapee=true) {
+        LOGV << "start writeDngAndJpg: " << file_jpg.string() << " run_threaded = " << run_threaded;
+
+        if (run_threaded) {
+            chrono::nanoseconds ns(1);
+            auto status = s.job_queue.wait_for(ns);
+            if (status == future_status::ready) {
+                // make a copy, launch and return..
+                Imagedata *imgobj = cloneobj();
+                auto func = std::bind(&Imagedata::writeDngAndJpgString, imgobj, file_dng.string(), file_jpg.string(), false);
+                s.job_queue = async(launch::async, func);
+            }
+        } else {
+
+            LOGI << attributes_to_json(-1);
+
+            src = "camera"; dst = file_dng;
+            writeDng(file_dng);
+            src = file_dng; dst = file_jpg;
+            writeJpg(file_jpg, false);   // not threaded
+            // warning: destroy yourself--end of the road for this Imagedata object
+            delete this;
         }
     }
 
@@ -384,7 +434,32 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         LOGV << imageinfo;
 
         Exiv2::ExifData exifData;
-        exifData["Exif.Image.UniqueCameraModel"] = imageinfo;
+        exifData["Exif.Image.UniqueCameraModel"]           = imageinfo;
+        exifData["Exif.Image.BitsPerSample"]               = "16";                                                                     
+        exifData["Exif.Image.SamplesPerPixel"]             = "1";
+        exifData["Exif.Image.Make"]                        = "__SNAPPY__";
+        exifData["Exif.Image.Model"]                       = "__WEED__";
+        exifData["Exif.Image.ColorMatrix1"]                = "1 0 0 0 1 0 0 0 1";
+        exifData["Exif.Image.ColorMatrix2"]                = "1 0 0 0 1 0 0 0 1";
+        exifData["Exif.Image.AsShotNeutral"]               = "1 1 1";
+                                                
+        exifData["Exif.Image.DNGVersion"]                  = "1.4.0.0";
+        exifData["Exif.Image.DNGBackwardVersion"]          = "1.3.0.0";
+        exifData["Exif.Image.SubfileType"]                 = "Full-resolution Image";
+        exifData["Exif.Image.PhotometricInterpretation"]   = "Color Filter Array";
+        exifData["Exif.Image.Orientation"]                 = "Horizontal";
+        exifData["Exif.Image.MakerNotes:WB_RBLevels"]      = "1 1 1 1";
+        exifData["Exif.Image.WB_RBLevels"]                 = "1 1 1 1";
+        exifData["Exif.Image.AnalogBalance"]               = "1 1 1";
+                                                
+        exifData["Exif.Image:CFARepeatPatternDim"]         = "2 2";
+        exifData["Exif.Image:CFAPattern2"]                 = "0 1 1 2";
+        exifData["Exif.Image:CalibrationIlluminant1"]      = "Standard Light A";
+        exifData["Exif.Image:CalibrationIlluminant2"]      = "D65";
+        exifData["Exif.Image:CalibrationIlluminant1"]      = "Standard Light A";
+        exifData["Exif.Image:CalibrationIlluminant2"]      = "D65";
+
+
         Exiv2::Image::AutoPtr image = Exiv2::ImageFactory::open(dngname.c_str());
         try {
             image->setExifData(exifData);
@@ -401,31 +476,35 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         ExifTool *et = new ExifTool();
         //auto et = s.exiftool;
 
-        string imageinfo = attributes_to_json(0);
+        string imageinfo = attributes_to_json(-1);
 
         et->SetNewValue("UniqueCameraModel",            imageinfo.c_str());
-        et->SetNewValue("DNGVersion",                   "1.4.0.0");
-        et->SetNewValue("DNGBackwardVersion",           "1.3.0.0");
-        et->SetNewValue("EXIF:SubfileType",             "Full-resolution Image");
-        et->SetNewValue("DNGBackwardVersion",           "1.3.0.0");
-        et->SetNewValue("EXIF:SubfileType",             "Full-resolution Image");
-        et->SetNewValue("PhotometricInterpretation",    "Color Filter Array");
-        et->SetNewValue("IFD0:CFARepeatPatternDim",     "2 2");
-        et->SetNewValue("IFD0:CFAPattern2",             "0 1 1 2");
-        et->SetNewValue("Orientation",                  "Horizontal");
+
         et->SetNewValue("BitsPerSample",                "16");
         et->SetNewValue("SamplesPerPixel",              "1");
         et->SetNewValue("Make",                         "__SNAPPY__");
         et->SetNewValue("Model",                        "__WEED__");
         et->SetNewValue("ColorMatrix1",                 "1 0 0 0 1 0 0 0 1");
         et->SetNewValue("ColorMatrix2",                 "1 0 0 0 1 0 0 0 1");
+        et->SetNewValue("AsShotNeutral",                "1 1 1");
+
+        et->SetNewValue("DNGVersion",                   "1.4.0.0");
+        et->SetNewValue("DNGBackwardVersion",           "1.3.0.0");
+        et->SetNewValue("EXIF:SubfileType",             "Full-resolution Image");
+        et->SetNewValue("PhotometricInterpretation",    "Color Filter Array");
+        et->SetNewValue("Orientation",                  "Horizontal");
         et->SetNewValue("MakerNotes:WB_RBLevels",       "1 1 1 1");
         et->SetNewValue("WB_RBLevels",                  "1 1 1 1");
         et->SetNewValue("AnalogBalance",                "1 1 1");
+
+        et->SetNewValue("IFD0:CFARepeatPatternDim",     "2 2");
+        et->SetNewValue("IFD0:CFAPattern2",             "0 1 1 2");
         et->SetNewValue("IFD0:CalibrationIlluminant1",  "Standard Light A");
         et->SetNewValue("IFD0:CalibrationIlluminant2",  "D65");
         et->SetNewValue("IFD0:CalibrationIlluminant1",  "Standard Light A");
         et->SetNewValue("IFD0:CalibrationIlluminant2",  "D65");
+
+
 
 
         // write exif to file 
@@ -471,8 +550,148 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     }
 
 
+    int writeDng(string dngname, bool wb_and_cc = false) {
+ 
+        enum illuminant {
+            ILLUMINANT_UNKNOWN = 0,
+            ILLUMINANT_DAYLIGHT,
+            ILLUMINANT_FLUORESCENT,
+            ILLUMINANT_TUNGSTEN,
+            ILLUMINANT_FLASH,
+            ILLUMINANT_FINE_WEATHER = 9,
+            ILLUMINANT_CLOUDY_WEATHER,
+            ILLUMINANT_SHADE,
+            ILLUMINANT_DAYLIGHT_FLUORESCENT,
+            ILLUMINANT_DAY_WHITE_FLUORESCENT,
+            ILLUMINANT_COOL_WHITE_FLUORESCENT,
+            ILLUMINANT_WHITE_FLUORESCENT,
+            ILLUMINANT_STANDARD_A = 17,
+            ILLUMINANT_STANDARD_B,
+            ILLUMINANT_STANDARD_C,
+            ILLUMINANT_D55,
+            ILLUMINANT_D65,
+            ILLUMINANT_D75,
+            ILLUMINANT_D50,
+            ILLUMINANT_ISO_TUNGSTEN,
+        };
+
+        enum tiff_cfa_color {
+            CFA_RED = 0,
+            CFA_GREEN = 1,
+            CFA_BLUE = 2,
+        };
+
+        enum cfa_pattern {
+            CFA_BGGR = 0,
+            CFA_GBRG,
+            CFA_GRBG,
+            CFA_RGGB,
+            CFA_NUM_PATTERNS,
+        };
+
+        static const char cfa_patterns[4][CFA_NUM_PATTERNS] = {                                                                                       
+            [CFA_BGGR] = {CFA_BLUE, CFA_GREEN, CFA_GREEN, CFA_RED},
+            [CFA_GBRG] = {CFA_GREEN, CFA_BLUE, CFA_RED, CFA_GREEN},
+            [CFA_GRBG] = {CFA_GREEN, CFA_RED, CFA_BLUE, CFA_GREEN},
+            [CFA_RGGB] = {CFA_RED, CFA_GREEN, CFA_GREEN, CFA_BLUE},
+        };
+
+        /* Default ColorMatrix1, when none provided */
+        static const float default_color_matrix[] = {
+             2.005, -0.771, -0.269,
+            -0.752,  1.688,  0.064,
+            -0.149,  0.283,  0.745
+        };
+
+
+        unsigned int pattern = CFA_RGGB;                                                                                                          
+   static const short bayerPatternDimensions[] = { 2, 2 };
+   static const float ColorMatrix[] = {
+      1.0, 0.0, 0.0,
+      0.0, 1.0, 0.0,
+      0.0, 0.0, 1.0,
+   };
+
+   static const float AsShotNeutral[] = {
+      0.8, 1.0, 0.6,
+   };
+
+
+    // create Mat object from raw data
+    Mat mat_crop(height, width, CV_16U, data, bytesperline);
+    printMatStats("mat_crop", mat_crop);
+
+    // encode to tiff
+    vector<int> params;
+    params.push_back(IMWRITE_TIFF_COMPRESSION);
+    params.push_back(COMPRESSION_NONE);
+    vector<uchar> buffer;
+    cv::imencode(".tiff", mat_crop, buffer, params);
+
+    // load into 
+     istringstream in (std::string(buffer.begin(), buffer.end()));
+     TIFF* intif = TIFFStreamOpen("MemTIFF", &in);
+     //TIFF* intif = TIFFOpen("temp.tif", "r");
+     LOGV << "created MemTIFF from data len=" << buffer.size();
+
+    string imageinfo = attributes_to_json(-1);
+
+    TIFF* tif = TIFFOpen (dngname.c_str(), "w");
+
+
+    TIFFSetField(tif, TIFFTAG_COMPRESSION, COMPRESSION_NONE);
+    TIFFSetField(tif, TIFFTAG_DNGVERSION, "\001\004\0\0");
+    TIFFSetField(tif, TIFFTAG_DNGBACKWARDVERSION, "\001\004\0\0");
+
+
+    TIFFSetField (tif, TIFFTAG_SUBFILETYPE, 0);
+    TIFFSetField (tif, TIFFTAG_IMAGEWIDTH, width);
+    TIFFSetField (tif, TIFFTAG_IMAGELENGTH, height);
+    TIFFSetField (tif, TIFFTAG_BITSPERSAMPLE, 16);
+    TIFFSetField (tif, TIFFTAG_ROWSPERSTRIP, 1);
+    TIFFSetField (tif, TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT);
+    TIFFSetField (tif, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_CFA);
+    TIFFSetField (tif, TIFFTAG_SAMPLESPERPIXEL, 1);
+    TIFFSetField (tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+    TIFFSetField (tif, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT);
+    TIFFSetField (tif, TIFFTAG_CFAREPEATPATTERNDIM, bayerPatternDimensions);
+    TIFFSetField(tif, TIFFTAG_CFAPATTERN, cfa_patterns[pattern]);
+    // needs to have the "4" depending on definition in ./libtiff/tif_dirinfo.c
+    //TIFFSetField(tif, TIFFTAG_CFAPATTERN, 4, cfa_patterns[pattern]);
+    //
+
+   //TIFFSetField (tif, TIFFTAG_CFAPATTERN, "\00\01\01\02");
+   //TIFFSetField(tif, TIFFTAG_CFAREPEATPATTERNDIM, "\02\02");
+
+    TIFFSetField (tif, TIFFTAG_MAKE, "__SNAPPY__");
+    TIFFSetField (tif, TIFFTAG_MODEL, "__WEED__");
+    TIFFSetField (tif, TIFFTAG_UNIQUECAMERAMODEL, imageinfo.c_str());
+    TIFFSetField (tif, TIFFTAG_COLORMATRIX1, 9, default_color_matrix);
+    TIFFSetField (tif, TIFFTAG_COLORMATRIX2, 9, default_color_matrix);
+    TIFFSetField (tif, TIFFTAG_ASSHOTNEUTRAL, 3, AsShotNeutral);
+    TIFFSetField (tif, TIFFTAG_CFALAYOUT, 1);
+    TIFFSetField (tif, TIFFTAG_CFAPLANECOLOR, 3, "\00\01\02");
+
+    uint32* scan_line = (uint32 *)malloc(width*(sizeof(uint32)));
+
+    for (int i = 0; i < height; i++) {
+         TIFFReadScanline(intif, scan_line, i);
+         TIFFWriteScanline(tif, scan_line, i, 0);
+    }
+
+     LOGV << "TIFFNumberOfStrips: " <<  TIFFNumberOfStrips(intif) << " -> " <<  TIFFNumberOfStrips(tif);
+     LOGV << "TIFFNumberOfTiles:  " <<  TIFFNumberOfTiles(intif) << " -> " <<  TIFFNumberOfTiles(tif);
+
+    TIFFClose (intif);
+    TIFFClose (tif);
+
+    return 0;
+
+    }
+
+
     // assume input data is in raw format
-    int writeDng(fs::path dngname, bool wb_and_cc) {
+    int writeDngV2(fs::path dngname, bool wb_and_cc = false) {
 
         Mat mat_crop(height, width, CV_16U, data, bytesperline);
         printMatStats("mat_crop", mat_crop);
@@ -490,12 +709,13 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         outfile.close();
 
         // now add dng exif attributes
+        //writeDngAttr(dngname);
         writeDngAttr(dngname);
 
     }
    
     // assume input data is in raw format!
-    int writeDngOld(fs::path dngname, bool wb_and_cc) {
+    int writeDngV1(fs::path dngname, bool wb_and_cc = false) {
 
         // assume g.dng_headerdata is loaded 
         assert(s.dng_headerdata != nullptr);
@@ -623,35 +843,56 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     
     }
 
+    // from https://stackoverflow.com/questions/1343890/how-do-i-restrict-a-float-value-to-only-two-places-after-the-decimal-point-in-c
+    float prd(const double x, const int decDigits) {
+        stringstream ss;
+        ss << fixed;
+        ss.precision(decDigits); // set # places after decimal
+        ss << x;
+        return stoi(ss.str());
+    }
+
     string attributes_to_json(int pad) {
 
         json jout;
 
-        jout["src"]=                src;
-        jout["header"]=             header;
-        jout["basename"]=           basename;
-        jout["datestamp"]=          datestamp;
-        jout["system_clock_ns"]=    system_clock_ns;
-        jout["steady_clock_ns"]=    steady_clock_ns;
-        jout["gain"]=               gain;
-        jout["expo"]=               expo;
-        jout["sweep_index"]=        sweep_index;
-        jout["sweep_total"]=        sweep_total;
-        jout["fps"]=                fps;
-        jout["delta_ms"]=           delta_ms;
-        jout["bpp"]=                bpp ;
-        jout["width"]=              width ;
-        jout["height"]=             height ;
-        jout["bytesperline"]=       bytesperline ;
-        jout["datalength"]=         datalength ;
-        jout["comment"]=            comment;
-        jout["text_north"]=         text_north;
-        jout["text_east"]=          text_east;
-        jout["command"]=            command;
+        jout["info"]["basename"]=           basename;
+        jout["info"]["src"]=                src;
+        jout["info"]["dst"]=                dst;
+        jout["info"]["header"]=             header;
+        jout["info"]["command"]=            command;
+        jout["info"]["comment"]=            comment;
+        jout["info"]["text_north"]=         text_north;
+        jout["info"]["text_east"]=          text_east;
+
+        jout["time"]["datestamp"]=          datestamp;
+        jout["time"]["system_clock_ns"]=    system_clock_ns;
+        jout["time"]["steady_clock_ns"]=    steady_clock_ns;
+        jout["time"]["fps"]=                prd(fps,0);
+        jout["time"]["delta_ms"]=           prd(delta_ms,0);
+
+        jout["camera"]["gain"]=             gain;
+        jout["camera"]["expo"]=             expo;
+        jout["camera"]["sweep_index"]=      sweep_index;
+        jout["camera"]["sweep_total"]=      sweep_total;
+
+        jout["image"]["bpp"]=               bpp ;
+        jout["image"]["width"]=             width ;
+        jout["image"]["height"]=            height ;
+        jout["image"]["bytesperline"]=      bytesperline ;
+        jout["image"]["datalength"]=        datalength ;
+
 
         return jout.dump(pad);
     }
 
+
+/*
+    static void runObjFunction(Imagedata *imgobj, fs::path file_dng, fs::path file_jpg){
+        LOGV << "start runObjFunction";
+        imgobj->writeDngAndJpg(file_dng, file_jpg, false);
+    }
+*/
 
     static void runThreadedCommand(string command) {
         string result = exec(command);
@@ -783,7 +1024,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     void printMatStats(string name, Mat M) {
         double min, max;
 
-        if (true)
+        if (false)
             return;
 
         minMaxLoc(M, &min, &max);

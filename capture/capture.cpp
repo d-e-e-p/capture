@@ -35,7 +35,7 @@ struct Options {
     bool vary_both = false;
 
     bool alljpg = false;
-    bool nosave = false;
+    bool noraw = false;
     bool nojpg = false;
     bool noexif = false;
     bool display = false;
@@ -204,35 +204,6 @@ void stopCapture() {
     cleanUp();
 }
 
-void PrintHelp() {
-    LOGI << R"(
-    capture 
-         --minutes <n>:       set num of minutes to capture
-         --frames <n>:        set number of frames to capture
-         --resolution (low|std|high)    
-         --gain <n>:          set gain
-         --exposure <n>:      set exposure
-         --fps <n>:           set rate limit on frames to capture per sec
-         --vary_gain:         sweep gain from min to max
-         --min_gain:          min gain for sweep
-         --max_gain:          max gain for sweep
-         --vary_expo:         sweep exposure from min to max
-         --min_expo:          min gain for sweep
-         --max_expo:          max gain for sweep
-         --vary_both:         sweep both gain and exposure from min to max
-         --nosave:            no saving any images--just display
-         --nojpg:             no jpeg or display--just raw image dump
-         --alljpg:            capture jpg for every image
-         --noexif:            no exif metadata in jpeg
-         --comment:           specify a comment to remember the run
-         --display:           display window
-         --interactive        display window and only save on keypress
-         --verbose:           verbose
-         --help:              show help
-    )";
-    exit(1);
-}
-
 // count = BUFSIZ is also a problem...
 fs::path getExePath() {
   char result[ BUFSIZ ];
@@ -244,6 +215,45 @@ fs::path getExePath() {
   result[count] = '\0';
   return string( result );
 }
+
+void PrintHelp() {
+
+    string exename = getExePath();
+
+    LOGI << "\n    " << exename << R"(
+         --comment:           specify a comment to remember the run
+         --minutes <n>:       set num of minutes to capture
+         --frames <n>:        set number of frames to capture
+         --resolution (low|std|high)    
+         --gain <n>:          set gain
+         --exposure <n>:      set exposure
+         --fps <n>:           set rate limit on frames to capture per sec
+    # loops 
+         --vary_gain:         sweep gain from min to max
+         --min_gain:          min gain for sweep
+         --max_gain:          max gain for sweep
+         --vary_expo:         sweep exposure from min to max
+         --min_expo:          min gain for sweep
+         --max_expo:          max gain for sweep
+         --vary_both:         sweep both gain and exposure from min to max
+
+    # what to save
+         --noraw:             don't save raw images
+         --nojpg:             no jpeg or display--just raw image dump
+         --nosave:            equiv to --noraw and --nojpg
+         --alljpg:            capture jpg for every image unless --nojpg
+         --noexif:            no exif metadata in jpeg
+
+    # what to show
+         --display:           display window
+         --interactive        display window and only save on keypress
+
+         --verbose:           verbose
+         --help:              show help
+    )";
+    exit(1);
+}
+
 
 void setupDirs() {
 
@@ -826,19 +836,19 @@ int endLoopCallback( void *ptr, int datalength, struct v4l2_buffer buf, struct v
        showImage(image);
    }
 
-   // ok now to save raw/dng
-   if (! opt.nosave) {
-       saveRaw(image);
-       saveDng(image);
-   } 
+   if (! opt.noraw) {
+       saveRaw(image);  // also saves json as side effect
+   }
 
    if (! opt.nojpg) {
-       saveJpg(image);
-    }
+       saveJpg(image);  // also saves dng as side effect
+   }
 
 
    // all done with processing 
-   delete image;
+    if (! image->dont_delete_me_yet) {
+        delete image;
+    }
 
 
    // ready to return...but first check if we should exist or wait instead
@@ -896,9 +906,31 @@ void saveRaw(Imagedata* image) {
 	image->writeJson(file_json);
 }
 
+// should return without waiting for actual write operation...
+void saveJpg(Imagedata* image) {
+
+    // first see if the the queue is empty...otherwise just return
+    chrono::nanoseconds ns(1);
+    auto status = sd.job.wait_for(ns);
+    if (status != future_status::ready) {
+        return;
+    }
+
+
+    fs::path file_dng = fp.folder_dng / (image->basename + ".dng");
+    fs::path file_jpg = fp.folder_jpg / (image->basename + ".jpg");
+    image->createAnnoText();
+
+    image->dont_delete_me_yet = true;
+    auto func = std::bind(&Imagedata::writeDngAndJpgString, image, file_dng, file_jpg, false);
+    sd.job = async(launch::async, func);
+
+
+}
+
 // different from others because it might be threaded out so needs a 
 // private copy of imagedata
-void saveJpg(Imagedata* image) {
+void saveJpgOld(Imagedata* image) {
 
     fs::path file_dng = fp.folder_dng / (image->basename + ".dng");
     fs::path file_jpg = fp.folder_jpg / (image->basename + ".jpg");
@@ -913,10 +945,13 @@ void saveJpg(Imagedata* image) {
         image->writeDng(file_dng, false);
     }
 
-    // make a shallow copy for jpg and return...this could take a while
-    Imagedata imgobj = *image;
-    imgobj.data = nullptr; // TODO: constructor in class should handle this
-    imgobj.writeJpg(file_jpg);
+    // make a copy and return..
+    Imagedata *imgobj = new Imagedata;
+    imgobj = image; // shallow copy....too much work to write assignment operator in class
+    memcpy(imgobj->data, image->data, image->datalength);
+        imgobj->writeDng(file_dng, false);
+        imgobj->writeJpg(file_jpg);
+        delete imgobj;
 
     // warning image object destroyed before writeJpg could complete...
 
@@ -1005,8 +1040,9 @@ void processArgs(int argc, char** argv) {
         OptMaxExposure,
         OptVaryBoth,
         OptAllJpg,
-        OptNoSave,
+        OptNoRaw,
         OptNoJpg,
+        OptNoSave,
         OptNoExif,
         OptDisplay,
         OptInteractive,
@@ -1033,8 +1069,9 @@ void processArgs(int argc, char** argv) {
         {"max_exposure",  required_argument,  0,    OptMaxExposure },
         {"vary_both",     no_argument,        0,    OptVaryBoth },
         {"alljpg",        no_argument,        0,    OptAllJpg },
-        {"nosave",        no_argument,        0,    OptNoSave },
+        {"noraw",         no_argument,        0,    OptNoRaw },
         {"nojpg",         no_argument,        0,    OptNoJpg },
+        {"nosave",        no_argument,        0,    OptNoSave },
         {"noexif",        no_argument,        0,    OptNoExif },
         {"display",       no_argument,        0,    OptDisplay },
         {"interactive",   no_argument,        0,    OptInteractive },
@@ -1115,16 +1152,21 @@ void processArgs(int argc, char** argv) {
             LOGI << "Option: save all jpeg files" ;
             break;
         case OptNoSave:
-            opt.nosave = true;
+            opt.noraw = true;
+            opt.nojpg = true;
             LOGI << "Option: no saving raw or jpeg files" ;
             break;
         case OptNoExif:
             opt.noexif = true;
             LOGI << "Option: no exif metadata in jpeg files" ;
             break;
+        case OptNoRaw:
+            opt.noraw = true;
+            LOGI << "Option: not saving any raw files" ;
+            break;
         case OptNoJpg:
             opt.nojpg = true;
-            LOGI << "Option: no jpeg files" ;
+            LOGI << "Option: not saving any jpg files" ;
             break;
         case OptComment:
             opt.comment = string(optarg);
@@ -1138,7 +1180,7 @@ void processArgs(int argc, char** argv) {
             opt.interactive = true;
             LOGI << "Option: show live view and turn off saving" ;
             opt.display = true;
-            opt.nosave = true;
+            opt.noraw = true;
             opt.nojpg = true;
             opt.frames = 100000;
             break;
@@ -1465,7 +1507,6 @@ int varyBoth (void) {
 
 void cleanUp () {
     // clean up...
-    LOGV << " final cleanup.." << endl << flush;;
     destroyAllWindows();
     MagickCoreTerminus();
 
@@ -1473,5 +1514,6 @@ void cleanUp () {
     for (auto& th : sd.threads) {
         th.join();
     }
+    LOGV << " final cleanup done" << endl << flush;;
 }
 
