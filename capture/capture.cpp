@@ -189,8 +189,8 @@ int main(int argc, char **argv) {
 }
 
 void setupCapture() { 
-    setupLoop();
     open_device(); 
+    setupLoop();
     init_device(); 
     setupCamera();
     start_capturing();
@@ -378,7 +378,6 @@ void defineColorCorrectionMatrix() {
 void setupCamera(void) {
 
     // set default gain and exposure
-    setResolution(opt.resolution);
     setGain(opt.gain);
     setExposure(opt.expo);
     set_fps(200);
@@ -706,6 +705,9 @@ void process_image(void *ptr, int size, struct v4l2_buffer buf, struct v4l2_pix_
 
 
 void setupLoop(void) {
+
+    // first set camera resolution...once camera buffers are alocated it can't be done..
+    setResolution(opt.resolution);
     // inits for loop
     //
     // estimate lp.maxIntegerWidth to format basename
@@ -1399,6 +1401,7 @@ void setResolution (string resolution) {
         selected_resolution_option = str_to_num[resolution];
     }
 
+   LOGV << " selected_resolution_option = " << selected_resolution_option;
    set_resolution(selected_resolution_option);
 
 }

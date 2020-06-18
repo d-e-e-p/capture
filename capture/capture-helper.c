@@ -205,7 +205,7 @@ void mainloop(void)
 			FD_SET(fd, &fds);
 
 			/* Timeout. */
-			tv.tv_sec = 2;
+			tv.tv_sec = 5;
 			tv.tv_usec = 0;
 
 			r = select(fd + 1, &fds, NULL, NULL, &tv);
@@ -715,6 +715,13 @@ void open_device(void)
 			 dev_name, errno, strerror(errno));
 		exit(EXIT_FAILURE);
 	}
+
+    // populate features for setting resolution
+	CLEAR(fmt);
+	fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	if (-1 == xioctl(fd, VIDIOC_G_FMT, &fmt))
+		errno_exit("VIDIOC_G_FMT");
+
 }
 
 static void usage(FILE *fp, int argc, char **argv)
@@ -977,17 +984,16 @@ int set_resolution(int num) {
 
     struct v4l2_frmsizeenum frmsize;
     struct v4l2_frmivalenum frmival;
-	struct v4l2_pix_format pix = fmt.fmt.pix;
 
     memset(&frmsize, 0xff, sizeof(frmsize));
-    frmsize.pixel_format = pix.pixelformat;
+    frmsize.pixel_format = fmt.fmt.pix.pixelformat;
 
     std::string selected;
     frmsize.index = 0;
     while (ioctl(fd, VIDIOC_ENUM_FRAMESIZES, &frmsize) >= 0) {
         if (frmsize.index == num) {
-            pix.width  = frmsize.discrete.width;
-            pix.height = frmsize.discrete.height;
+            fmt.fmt.pix.width  = frmsize.discrete.width;
+            fmt.fmt.pix.height = frmsize.discrete.height;
             selected = " [selected] ";
         } else{
             selected = " ";
@@ -997,6 +1003,13 @@ int set_resolution(int num) {
             std::right << std::setw(5) << frmsize.discrete.height << selected ;
         frmsize.index++;
      }
+
+    // EBUSY after init_device()
+    // The device is busy and cannot change the format. 
+    // This could be because or the device is streaming or buffers are allocated or queued to the driver.
+	if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
+			errno_exit("VIDIOC_S_FMT");
+
 
 }
 
