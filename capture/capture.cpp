@@ -246,7 +246,7 @@ void PrintHelp() {
 
     # what to show
          --display:           display window
-         --interactive        display window and only save on keypress
+         --interactive        equiv to --display --nosave --frames 100000
 
          --verbose:           verbose
          --help:              show help
@@ -305,11 +305,11 @@ void setupDirs() {
     fp.folder_jpg  = fp.folder_base / "jpg" ; fs::create_directories(fp.folder_jpg);
     fp.folder_json = fp.folder_base / "json"; fs::create_directories(fp.folder_json);
 
-    LOGI << " using dng header:" << fp.dng_headerfile.string() ;
+    //LOGI << " using dng header:" << fp.dng_headerfile.string() ;
     LOGV << " using darktable style:" << fp.dt_stylefile.string() ;
     LOGV << " using rawtherapee style:" << fp.rt_stylefile.string() ;
 
-    LOGI << "results under:" << fp.folder_base.string() ;
+    LOGI << "results under:" << fp.folder_base.string() << "/" ;
     LOGV << "   raw  under : "  << fp.folder_raw.string();
     LOGV << "   json under : "  << fp.folder_json.string();
     LOGV << "   dng  under : "  << fp.folder_dng.string();
@@ -652,18 +652,16 @@ void estimateSharpness(Imagedata* image, Mat& mat_in) {
 }
 
 void showImage(Imagedata* image) {
+
     // step 1: import blob into opencv
-    // step is number of bytes each matrix row occupies including padding
-    int new_width = 728; // width goes from 768 to 728
-    int step = image->width * image->pixel_depth;
-    Mat mat_crop(image->height, new_width, CV_16U, image->data, step);
-    image->width = new_width;
+    Mat mat_crop(image->height, image->width, CV_16U, image->data, image->bytesperline);
     printMatStats("mat_crop", mat_crop);
 
+    // step 2: bayer
     Mat mat_bayer1(image->height, image->width, CV_8U);
     demosaicing(mat_crop, mat_bayer1, COLOR_BayerRG2RGB);
-
     printMatStats("mat_bayer1", mat_bayer1);
+
     Mat mat_todisplay;
     if (g.toggle_c_colorcorrect) {
         mat_todisplay = correctImageColors(image, mat_bayer1);
@@ -680,6 +678,13 @@ void showImage(Imagedata* image) {
 	image->createAnnoText();
     string text_help = "    hotkeys: (s) save (f) resize (c) color (w) whitebalance   (q) quit ";
     string text_status = image->text_east + text_help;
+
+	if ((g.imagewidth != image->width) or (g.imageheight != image->height)) {
+		g.imagewidth  = image->width;
+		g.imageheight = image->height;
+        resizeWindow(g.mainWindowName, g.imagewidth, g.imageheight);
+    }
+
     displayOverlay(g.mainWindowName, image->text_north, 0);
     displayStatusBar(g.mainWindowName, text_status, 0);
 
