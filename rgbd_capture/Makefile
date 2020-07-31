@@ -17,7 +17,7 @@ all: ../bin/rgbd_capture
 	echo done
 
 ../bin/rgbd_capture: rgbd_capture.cpp
-	$(CC) -o $@ $< $(OPENCV_FLAGS) $(CFLAGS) 
+	$(CC) -o $@ $< $(OPENCV_FLAGS) $(CFLAGS) $(PROFILE)
 
 watch:
 	while true; do \

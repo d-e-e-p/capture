@@ -61,7 +61,7 @@ struct Globals {
     int imagewidth  = 728;
     int imageheight = 544;
     bool toggle_f_windowsize = false;
-    bool toggle_c_colorcorrect = true;
+    bool toggle_c_colorcorrect = false;
 
     Mat ccm;
 
@@ -472,11 +472,11 @@ string getMatType(Mat M) {
 }
 
 void printMatStats(string name, Mat M) {
-    double min, max;
 
-    if (false)
+    if (! opt.verbose)
         return;
 
+    double min, max;
     minMaxLoc(M, &min, &max);
     int max_length = 30;
     string spacer = "";
@@ -516,24 +516,16 @@ Mat correctImageColors (Imagedata* image, Mat mat_in_int) {
     normalize(mat_multipled, mat_multipled, 255, 0, NORM_MINMAX);
     printMatStats("mat_multipled",  mat_multipled);
 
-    // convert back to int
-    Mat mat_multipled_int = Mat(image->height, image->width, CV_8U);
-    mat_multipled.convertTo(mat_multipled_int, CV_8U, 1);
-    printMatStats("mat_multipled_int",  mat_multipled_int);
 
-    /*
-    //white balance
-    Ptr<xphoto::WhiteBalancer> wb;
-    wb = xphoto::createGrayworldWB();
+	// low res white balancing doesn't work...
+	if (opt.resolution == "low") {
+        // convert back to int
+        Mat mat_multipled_int = Mat(image->height, image->width, CV_8U);
+        mat_multipled.convertTo(mat_multipled_int, CV_8U, 1);
+        printMatStats("mat_multipled_int",  mat_multipled_int);
 
-    Mat mat_wb_int;
-    wb->balanceWhite(mat_multipled_int, mat_wb_int);
-    printMatStats("mat_wb_int",   mat_wb_int);
-
-    Mat mat_wb_norm;
-    normalize(mat_wb_int, mat_wb_norm, 255, 0.0, NORM_MINMAX);
-    printMatStats("mat_wb_norm",   mat_wb_norm);
-    */
+		return mat_multipled_int;
+	}
 
     //white balance
     Ptr<xphoto::WhiteBalancer> wb;
@@ -917,8 +909,11 @@ void saveRaw(Imagedata* image) {
 void saveJpg(Imagedata* image) {
 
     // first see if the the queue is empty...otherwise just return
-    chrono::nanoseconds ns(1);
-    auto status = sd.job.wait_for(ns);
+    chrono::nanoseconds wait_time(1);
+    if (opt.alljpg) {
+        wait_time = chrono::hours(1);
+    }
+    auto status = sd.job.wait_for(wait_time);
     if (status != future_status::ready) {
         return;
     }

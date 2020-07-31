@@ -786,7 +786,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 
         //load in header
         s.dng_headerlength = fs::file_size(s.dng_headerfile);
-        LOGI << " reading dng header : " <<  s.dng_headerfile << " size = " << s.dng_headerlength ;
+        //LOGI << " reading dng header : " <<  s.dng_headerfile << " size = " << s.dng_headerlength ;
         s.dng_headerdata = new char [s.dng_headerlength];
         ifstream fhead (s.dng_headerfile, ios::in|ios::binary);
         fhead.read (s.dng_headerdata, s.dng_headerlength);

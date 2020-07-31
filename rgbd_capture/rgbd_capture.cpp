@@ -108,154 +108,156 @@ rs2_distortion model = i.model;
     json.close();
 }
 
-int main() {
-    string datestamp = getDateStamp();
-    fs::path folder_data  = "data/rgbd";
-    fs::path folder_base =   folder_data / datestamp;
-    fs::path folder_color = folder_base / "color";
-    fs::path folder_depth = folder_base / "depth";
-    fs::path folder_infra    = folder_base / "infra";
+    int main() {
+        string datestamp = getDateStamp();
+        fs::path folder_data  = "data/rgbd";
+        fs::path folder_base =   folder_data / datestamp;
+        fs::path folder_color = folder_base / "color";
+        fs::path folder_depth = folder_base / "depth";
+        fs::path folder_infra    = folder_base / "infra";
 
 
-    if (! fs::exists(folder_color)) {
-        cout << "creating color dir : " << folder_color << "\n";
-        fs::create_directories(folder_color);
-    }
-    if (! fs::exists(folder_depth)) {
-        cout << "creating depth dir : " << folder_depth << "\n";
-        fs::create_directories(folder_depth);
-    }
-    if (! fs::exists(folder_infra)) {
-        cout << "creating infra dir : " << folder_infra << "\n";
-        fs::create_directories(folder_infra);
-    }
+        if (! fs::exists(folder_color)) {
+            cout << "creating color dir : " << folder_color << "\n";
+            fs::create_directories(folder_color);
+        }
+        if (! fs::exists(folder_depth)) {
+            cout << "creating depth dir : " << folder_depth << "\n";
+            fs::create_directories(folder_depth);
+        }
+        if (! fs::exists(folder_infra)) {
+            cout << "creating infra dir : " << folder_infra << "\n";
+            fs::create_directories(folder_infra);
+        }
 
-    rs2::colorizer color_map;
+        rs2::colorizer color_map;
 
-    //Contruct a pipeline which abstracts the device
-    rs2::pipeline pipe;
+        //Contruct a pipeline which abstracts the device
+        rs2::pipeline pipe;
 
-    //Create a configuration for configuring the pipeline with a non default profile
-    rs2::config cfg;
+        //Create a configuration for configuring the pipeline with a non default profile
+        rs2::config cfg;
 
-    cout << "begin config\n";
-    //Add desired streams to configuration
-    cfg.enable_stream(RS2_STREAM_COLOR,      1280,  720, RS2_FORMAT_BGR8, 30);
-    cfg.enable_stream(RS2_STREAM_DEPTH,      1280,  720, RS2_FORMAT_Z16,  30);
-    cfg.enable_stream(RS2_STREAM_INFRARED,   1280,  720, RS2_FORMAT_BGR8, 30);
-    cout << "end config\n";
+        cout << "begin config\n";
+        //Add desired streams to configuration
+        cfg.enable_stream(RS2_STREAM_COLOR,      1280,  720, RS2_FORMAT_BGR8, 15);
+        cfg.enable_stream(RS2_STREAM_DEPTH,      1280,  720, RS2_FORMAT_Z16,  15);
+        cfg.enable_stream(RS2_STREAM_INFRARED,   1280,  720, RS2_FORMAT_BGR8, 15);
 
-    //Instruct pipeline to start streaming with the requested configuration
-    auto profile = pipe.start(cfg);
-    cout << "pipeline started\n";
-    rs2::device dev = profile.get_device();
-    auto advanced = dev.as<rs400::advanced_mode>();
-    STDepthTableControl depth_table = advanced.get_depth_table();
-    std::stringstream ss;
-    ss << "depthUnits: "    << depth_table.depthUnits << ", ";
-    ss << "depthClampMin: " << depth_table.depthClampMin << ", ";
-    ss << "depthClampMax: " << depth_table.depthClampMax << ", ";
-    ss << "disparityMode: " << depth_table.disparityMode << ", ";
-    ss << "disparityShift: " << depth_table.disparityShift << "\n";
-    depth_table.depthUnits = 100;
-    depth_table.disparityShift = 128;
-    ss << "depthUnits: "    << depth_table.depthUnits << ", ";
-    ss << "depthClampMin: " << depth_table.depthClampMin << ", ";
-    ss << "depthClampMax: " << depth_table.depthClampMax << ", ";
-    ss << "disparityMode: " << depth_table.disparityMode << ", ";
-    ss << "disparityShift: " << depth_table.disparityShift << "\n";
-    cout << ss.str() << endl;
-    //result = set_depth_control(dev, &depth_control);
-    //advanced.load_json(str);
-    cout << "disparity set \n";
+        cout << "end config\n";
 
-    // see https://github.com/IntelRealSense/librealsense/wiki/API-How-To#controlling-the-laser
-    rs2::device selected_device = dev;
+        //Instruct pipeline to start streaming with the requested configuration
+        auto profile = pipe.start(cfg);
+        cout << "pipeline started\n";
+        rs2::device dev = profile.get_device();
+        auto advanced = dev.as<rs400::advanced_mode>();
+        STDepthTableControl depth_table = advanced.get_depth_table();
+        std::stringstream ss;
+        ss << "depthUnits: "    << depth_table.depthUnits << ", ";
+        ss << "depthClampMin: " << depth_table.depthClampMin << ", ";
+        ss << "depthClampMax: " << depth_table.depthClampMax << ", ";
+        ss << "disparityMode: " << depth_table.disparityMode << ", ";
+        ss << "disparityShift: " << depth_table.disparityShift << "\n";
+        depth_table.depthUnits = 100;
+        depth_table.disparityShift = 128;
+        ss << "depthUnits: "    << depth_table.depthUnits << ", ";
+        ss << "depthClampMin: " << depth_table.depthClampMin << ", ";
+        ss << "depthClampMax: " << depth_table.depthClampMax << ", ";
+        ss << "disparityMode: " << depth_table.disparityMode << ", ";
+        ss << "disparityShift: " << depth_table.disparityShift << "\n";
+        cout << ss.str() << endl;
+        //result = set_depth_control(dev, &depth_control);
+        //advanced.load_json(str);
+        cout << "disparity set \n";
 
-    auto depth_sensor = selected_device.first<rs2::depth_sensor>();
-    if (depth_sensor.supports(RS2_OPTION_EMITTER_ENABLED)) {
-        depth_sensor.set_option(RS2_OPTION_EMITTER_ENABLED, 1.f); // Enable emitter
-    }
-    if (depth_sensor.supports(RS2_OPTION_LASER_POWER)) {
-        // Query min and max values:
-        auto range = depth_sensor.get_option_range(RS2_OPTION_LASER_POWER);
-        depth_sensor.set_option(RS2_OPTION_LASER_POWER, range.max); // Set max power
-    }
+        // see https://github.com/IntelRealSense/librealsense/wiki/API-How-To#controlling-the-laser
+        rs2::device selected_device = dev;
 
-    depth_sensor.set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 1); //
+        auto depth_sensor = selected_device.first<rs2::depth_sensor>();
+        if (depth_sensor.supports(RS2_OPTION_EMITTER_ENABLED)) {
+            depth_sensor.set_option(RS2_OPTION_EMITTER_ENABLED, 1.f); // Enable emitter
+        }
+        if (depth_sensor.supports(RS2_OPTION_LASER_POWER)) {
+            // Query min and max values:
+            auto range = depth_sensor.get_option_range(RS2_OPTION_LASER_POWER);
+            depth_sensor.set_option(RS2_OPTION_LASER_POWER, range.max); // Set max power
+        }
 
-    // Camera warmup - dropping several first frames to let auto-exposure stabilize
-    rs2::frameset frames;
-   //Wait for all configured streams to produce a frame
-    cout << "capture frames to set auto expo \n";
-    for(int i = 0; i < 30; i++) {
-        frames = pipe.wait_for_frames();
-    }
+        depth_sensor.set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 1); //
 
-    auto color_sensor = selected_device.first<rs2::color_sensor>();
-    float exposure = color_sensor.get_option(RS2_OPTION_EXPOSURE);
-    float gain = color_sensor.get_option(RS2_OPTION_GAIN);
-    cout << "auto gain = " << gain << " expo = " << exposure <<  "\n";
+        // Camera warmup - dropping several first frames to let auto-exposure stabilize
+        rs2::frameset frames;
+       //Wait for all configured streams to produce a frame
+        cout << "capture frames to set auto expo \n";
+        for(int i = 0; i < 30; i++) {
+            frames = pipe.wait_for_frames();
+        }
 
-    /*
-    exposure *= 0.5;
-    gain *= 2.0;
-    frames = pipe.wait_for_frames();
-    cout << "disable auto exposure\n";
-    color_sensor.set_option(RS2_OPTION_EXPOSURE, exposure);
-    color_sensor.set_option(RS2_OPTION_GAIN, gain );
-    cout << "set  gain = " << gain << " expo = " << exposure <<  "\n";
-    */
+        auto color_sensor = selected_device.first<rs2::color_sensor>();
+        float exposure = color_sensor.get_option(RS2_OPTION_EXPOSURE);
+        float gain = color_sensor.get_option(RS2_OPTION_GAIN);
+        cout << "auto gain = " << gain << " expo = " << exposure <<  "\n";
 
-    int i = 0;
-    char buff[BUFSIZ];
-    while(1) {
-        if ((i % 10) == 0)
-            cout << "." << flush;
-        frames = pipe.wait_for_frames();
-        snprintf(buff, sizeof(buff), "img%0*d", 5, i++);
-        string basename = buff;
-
-        //Get each frame
-        rs2::frame infra_data = frames.first(RS2_STREAM_INFRARED);
-        rs2::frame depth_data  = frames.get_depth_frame();
-        rs2::frame color_frame = frames.get_color_frame();
-
-        rs2::frame infra_frame = infra_data.apply_filter(color_map);
-        rs2::frame depth_frame = depth_data.apply_filter(color_map);
-
-        // Creating OpenCV matrix from IR image
-        Mat mat_infra(Size(1280, 720), CV_8UC3, (void*)infra_frame.get_data(), Mat::AUTO_STEP);
-        Mat mat_depth(Size(1280, 720), CV_8UC3, (void*)depth_frame.get_data(), Mat::AUTO_STEP);
-        Mat mat_color(Size(1280, 720), CV_8UC3, (void*)color_frame.get_data(), Mat::AUTO_STEP);
-
-
-        // Apply Histogram Equalization
-        //equalizeHist( infra, infra );
         /*
-        Ptr<CLAHE> clahe = createCLAHE();
-        clahe->setClipLimit(4);
-        clahe->apply(infra, infra);
-        applyColorMap(infra, infrac, COLORMAP_TURBO);
+        exposure *= 0.5;
+        gain *= 2.0;
+        frames = pipe.wait_for_frames();
+        cout << "disable auto exposure\n";
+        color_sensor.set_option(RS2_OPTION_EXPOSURE, exposure);
+        color_sensor.set_option(RS2_OPTION_GAIN, gain );
+        cout << "set  gain = " << gain << " expo = " << exposure <<  "\n";
         */
 
-        // Display the image in GUI
-        string file_infra = folder_infra.string() + "/" + basename + ".jpg";
-        string file_depth = folder_depth.string() + "/" + basename + ".jpg";
-        string file_color = folder_color.string() + "/" + basename + ".jpg";
+        int i = 0;
+        char buff[BUFSIZ];
+        while(1) {
+            if ((i % 10) == 0)
+                cout << "." << "\n" << flush;
+            frames = pipe.wait_for_frames();
+            snprintf(buff, sizeof(buff), "img%0*d", 5, i++);
+            string basename = buff;
+            //cout << "basename=" << basename << "\n" << flush;
 
-        imwrite(file_infra,mat_infra);
-        imwrite(file_depth,mat_depth);
-        imwrite(file_color,mat_color);
+            //Get each frame
+            rs2::frame infra_data = frames.first(RS2_STREAM_INFRARED);
+            rs2::frame depth_data  = frames.get_depth_frame();
+            rs2::frame color_frame = frames.get_color_frame();
 
-        file_infra = folder_infra.string() + "/" + basename + ".json";
-        file_depth = folder_depth.string() + "/" + basename + ".json";
-        file_color = folder_color.string() + "/" + basename + ".json";
+            rs2::frame infra_frame = infra_data.apply_filter(color_map);
+            rs2::frame depth_frame = depth_data.apply_filter(color_map);
 
-        metadata_to_json(color_frame, file_color);
-        metadata_to_json(depth_data , file_depth);
-        metadata_to_json(infra_data , file_infra);
+            // Creating OpenCV matrix from IR image
+            Mat mat_infra(Size(1280, 720), CV_8UC3, (void*)infra_frame.get_data(), Mat::AUTO_STEP);
+            Mat mat_depth(Size(1280, 720), CV_8UC3, (void*)depth_frame.get_data(), Mat::AUTO_STEP);
+            Mat mat_color(Size(1280, 720), CV_8UC3, (void*)color_frame.get_data(), Mat::AUTO_STEP);
+
+
+            // Apply Histogram Equalization
+            //equalizeHist( infra, infra );
+            /*
+            Ptr<CLAHE> clahe = createCLAHE();
+            clahe->setClipLimit(4);
+            clahe->apply(infra, infra);
+            applyColorMap(infra, infrac, COLORMAP_TURBO);
+            */
+
+            // Display the image in GUI
+            string file_infra = folder_infra.string() + "/" + basename + ".jpg";
+            string file_depth = folder_depth.string() + "/" + basename + ".jpg";
+            string file_color = folder_color.string() + "/" + basename + ".jpg";
+
+            imwrite(file_infra,mat_infra);
+            imwrite(file_depth,mat_depth);
+            imwrite(file_color,mat_color);
+
+            file_infra = folder_infra.string() + "/" + basename + ".json";
+            file_depth = folder_depth.string() + "/" + basename + ".json";
+            file_color = folder_color.string() + "/" + basename + ".json";
+
+            metadata_to_json(color_frame, file_color);
+            metadata_to_json(depth_data , file_depth);
+            metadata_to_json(infra_data , file_infra);
+        }
+
+        return 0;
     }
-
-    return 0;
-}
