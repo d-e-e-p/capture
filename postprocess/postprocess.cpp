@@ -25,10 +25,12 @@ struct Globals {
     // file too small to be valid so ok to overwrite
     int smallsize = 1000;
     // options for source and destination extensions
-    string src_dir_ext  = "raw";
-    string dst_dir_ext  = "raw";
-    string src_file_ext = "dng";
-    string dst_file_ext = "dng";
+    string src_dir_ext   = "raw";
+    string dst_dir_ext   = "raw";
+    string json_dir_ext  = "json";
+    string src_file_ext  = "dng";
+    string dst_file_ext  = "dng";
+    string json_file_ext = "json";
     //
     string dateStamp;
 } g;
@@ -379,6 +381,32 @@ fs::path getDestFromSrc (fs::path src) {
 
 }
 
+fs::path getJsonFromSrc (fs::path src) {
+
+    src = fs::absolute(src);
+
+	string jsn = src.parent_path().parent_path().string() + "/" + g.json_dir_ext + "/";
+	fs::create_directories(jsn);
+
+    jsn += src.stem().string() + "." + g.json_file_ext;
+
+    return fs::path(jsn);
+
+}
+
+fs::path getJsonFromRun (fs::path src) {
+
+    src = fs::absolute(src);
+
+    // raw/img0000000.raw -> run.json
+	string jsn = src.parent_path().parent_path().string() + "/run.json";
+
+    return fs::path(jsn);
+
+}
+
+
+
  
 vector< pair <fs::path,fs::path> > getAllFiles(void) {
 
@@ -405,6 +433,7 @@ vector< pair <fs::path,fs::path> > getAllFiles(void) {
     
 }
 
+// TODO: make it work with paths that have trailing separator
 vector< pair <fs::path,fs::path> > getAllDirs(void) {
 
     vector< pair <fs::path,fs::path> > alldirs; 
@@ -442,8 +471,25 @@ int process_raw2dng(fs::path src, fs::path dst) {
 
     Imagedata img;
     
+    fs::path jsn_img = getJsonFromSrc(src);
+    fs::path jsn_run = getJsonFromRun(src);
+    //LOGI << "jsn_imag = " << jsn_img.string();
+    //LOGI << "jsn_run = " << jsn_run.string();
+
+    if (fs::exists(jsn_img)) {
+        img.readJson(jsn_img);
+    } else {
+        LOGW << "skipping image--json file does not exist: " << jsn_img.string();
+        return 0;
+    }
+
+    if (fs::exists(jsn_run)) {
+        img.readJson(jsn_run);
+    }
+
     img.loadImage(src);
     img.dst = dst;
+
 
     // hack: raw files don't have attributes so we need to fake them or get them from a side file...
     //img.sidefile_to_attributes(src,dst); 
@@ -501,11 +547,14 @@ int process_any2ahe(fs::path src, fs::path dst) {
 int process_any2ann(fs::path src, fs::path dst) { 
 
     Imagedata img;
-
-    img.loadImage(src);
-    img.getExif();
-    img.createAnnoText();
     img.src = src;
+    img.getExif();
+
+    // overwrite src
+    img.src = src;
+    img.dst = dst;
+    img.createAnnoText();
+
     img.writeAnnotated(dst, true);
 
 }
@@ -589,7 +638,7 @@ void setupDirs() {
     fp.dng_headerfile   =  profiledir / "dng_header_081100056.bin";
     fp.dt_stylefile     =  profiledir / "darktable.xml";
     //fp.rt_stylefile     =  profiledir / "basic_black_apr26_autorgb.pp3";
-    fp.rt_stylefile     =  profiledir / "basic_black_apr26.pp3 ";
+    fp.rt_stylefile     =  profiledir / "autoiso.pp3 ";
 
     LOGI << " using dng header:" << fp.dng_headerfile.string() ;
     LOGV << " using darktable style:" << fp.dt_stylefile.string() ;
@@ -623,6 +672,7 @@ int main(int argc, char** argv ) {
     bool run_dir_dng2any = (opt.convert == "dng2jpg") or (opt.convert == "dng2png");
     bool run_dir_any2ahe = opt.overwrite and ((opt.convert == "jpg2ahe") or (opt.convert == "png2ahe"));
     bool run_dir_mode = (! opt.sample) and (! opt.wb_and_cc) and (run_dir_dng2any or run_dir_any2ahe);
+    LOGI << " run_dir_mode = " << run_dir_mode;
     if (run_dir_mode) {
         auto alldirs = getAllDirs();
         size = alldirs.size();
@@ -681,6 +731,7 @@ int main(int argc, char** argv ) {
         result.get();
         float percent = 100.0 * (float) index++ / float (size);
         bar->set_progress(percent);
+		//LOGI << fixed << setprecision(2) << percent << "% convert : " << index << "/" << size << " files.";
 		//LOGI << fixed << setprecision(2) << percent << "% convert : " << index << "/" << size << " files.";
     }
     

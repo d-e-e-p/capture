@@ -366,15 +366,18 @@ class Imagedata{
         dst = to;
 
         string cmd;
+        string clahe = " -clahe 25x25%+128+2 ";
+
         if (label) {
-            // determined by experiments
-            string pointsize_north = to_string( (float) 1000 / (float) text_north.length() - 2 );
-            string pointsize_east  = to_string( (float)  800 / (float) text_east.length()  - 2 );
+            // scale factor determined by experiments
+            string pointsize_north = " -pointsize " + to_string( (float) 2120 / (float) text_north.length() - 2 );
+            string pointsize_east  = " -pointsize " + to_string( (float) 2000 / (float) text_east.length()  - 2 );
             // 728 x 544 -> 768 x 584
             //cmd = "/usr/local/bin/magick  " + src + " -clahe 25x25%+128+2 -quality 100 -gravity Southwest -background black -extent 768x584 -font Inconsolata -pointsize " + pointsize_north + " -fill yellow -gravity North -annotate 0x0+0+15 \"" + text_north + "\" -gravity East -pointsize " + pointsize_east + " -annotate 90x90+20+232 \"" + text_east + "\" -quality 100 " + dst;
-            cmd = "/usr/local/bin/magick  " + src + " -quality 100 -gravity Northwest -background black -extent 768x584 -font Inconsolata -pointsize " + pointsize_north + " -fill yellow -gravity South -annotate 0x0+0+15 \"" + text_north + "\" -gravity East -pointsize " + pointsize_east + " -annotate 90x90+20+232 \"" + text_east + "\" -quality 100 " + dst;
+            string extent = " -extent " + to_string(width + 34) + "x" + to_string(height + 62);
+            cmd = "/usr/local/bin/magick  " + src + clahe + " -quality 100 -gravity Northwest -background black " + extent + " -font Inconsolata " + pointsize_north + " -fill yellow -gravity South -annotate 0x0+0+15 \"" + text_north + "\" -gravity East " + pointsize_east + " -annotate 90x90+20+400 \"" + text_east + "\" -quality 100 " + dst;
         } else {
-            cmd = "magick  " + src + " -clahe 25x25%+128+2 -quality 100 " + dst;
+            cmd = "magick  " + src + clahe + " -quality 100 " + dst;
         }
 
         runMagick(cmd);
@@ -428,6 +431,8 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 
 }
 */
+
+    /*
     void writeDngAttr(fs::path dngname) {
 
         string imageinfo = attributes_to_json(0);
@@ -538,6 +543,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         delete et;
 
     }
+    */
 
     // assume input data is in raw format
     int writeJson(fs::path jsonname) {
@@ -549,71 +555,87 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         outfile.close();
     }
 
+    int readJson(fs::path jsonname) {
+        LOGV << "reading from  : " << jsonname.string() ;
+        ifstream infile(jsonname);
+        stringstream strStream;
+        strStream << infile.rdbuf(); 
+        string jstr = strStream.str(); 
+        infile.close();
+        json_to_attributes(jstr);
+    }
+
 
     int writeDng(string dngname, bool wb_and_cc = false) {
  
-        enum illuminant {
-            ILLUMINANT_UNKNOWN = 0,
-            ILLUMINANT_DAYLIGHT,
-            ILLUMINANT_FLUORESCENT,
-            ILLUMINANT_TUNGSTEN,
-            ILLUMINANT_FLASH,
-            ILLUMINANT_FINE_WEATHER = 9,
-            ILLUMINANT_CLOUDY_WEATHER,
-            ILLUMINANT_SHADE,
-            ILLUMINANT_DAYLIGHT_FLUORESCENT,
-            ILLUMINANT_DAY_WHITE_FLUORESCENT,
-            ILLUMINANT_COOL_WHITE_FLUORESCENT,
-            ILLUMINANT_WHITE_FLUORESCENT,
-            ILLUMINANT_STANDARD_A = 17,
-            ILLUMINANT_STANDARD_B,
-            ILLUMINANT_STANDARD_C,
-            ILLUMINANT_D55,
-            ILLUMINANT_D65,
-            ILLUMINANT_D75,
-            ILLUMINANT_D50,
-            ILLUMINANT_ISO_TUNGSTEN,
-        };
-
-        enum tiff_cfa_color {
-            CFA_RED = 0,
-            CFA_GREEN = 1,
-            CFA_BLUE = 2,
-        };
-
-        enum cfa_pattern {
-            CFA_BGGR = 0,
-            CFA_GBRG,
-            CFA_GRBG,
-            CFA_RGGB,
-            CFA_NUM_PATTERNS,
-        };
-
-        static const char cfa_patterns[4][CFA_NUM_PATTERNS] = {                                                                                       
-            [CFA_BGGR] = {CFA_BLUE, CFA_GREEN, CFA_GREEN, CFA_RED},
-            [CFA_GBRG] = {CFA_GREEN, CFA_BLUE, CFA_RED, CFA_GREEN},
-            [CFA_GRBG] = {CFA_GREEN, CFA_RED, CFA_BLUE, CFA_GREEN},
-            [CFA_RGGB] = {CFA_RED, CFA_GREEN, CFA_GREEN, CFA_BLUE},
-        };
-
-        /* Default ColorMatrix1, when none provided */
-        static const float default_color_matrix[] = {
-             2.005, -0.771, -0.269,
-            -0.752,  1.688,  0.064,
-            -0.149,  0.283,  0.745
-        };
-
-
-        unsigned int pattern = CFA_RGGB;                                                                                                          
-   static const short bayerPatternDimensions[] = { 2, 2 };
-   static const float ColorMatrix[] = {
-      1.0, 0.0, 0.0,
-      0.0, 1.0, 0.0,
-      0.0, 0.0, 1.0,
+   enum illuminant {
+       ILLUMINANT_UNKNOWN = 0,
+       ILLUMINANT_DAYLIGHT,
+       ILLUMINANT_FLUORESCENT,
+       ILLUMINANT_TUNGSTEN,
+       ILLUMINANT_FLASH,
+       ILLUMINANT_FINE_WEATHER = 9,
+       ILLUMINANT_CLOUDY_WEATHER,
+       ILLUMINANT_SHADE,
+       ILLUMINANT_DAYLIGHT_FLUORESCENT,
+       ILLUMINANT_DAY_WHITE_FLUORESCENT,
+       ILLUMINANT_COOL_WHITE_FLUORESCENT,
+       ILLUMINANT_WHITE_FLUORESCENT,
+       ILLUMINANT_STANDARD_A = 17,
+       ILLUMINANT_STANDARD_B,
+       ILLUMINANT_STANDARD_C,
+       ILLUMINANT_D55,
+       ILLUMINANT_D65,
+       ILLUMINANT_D75,
+       ILLUMINANT_D50,
+       ILLUMINANT_ISO_TUNGSTEN,
    };
 
+   enum tiff_cfa_color {
+       CFA_RED = 0,
+       CFA_GREEN = 1,
+       CFA_BLUE = 2,
+   };
+
+   enum cfa_pattern {
+       CFA_BGGR = 0,
+       CFA_GBRG,
+       CFA_GRBG,
+       CFA_RGGB,
+       CFA_NUM_PATTERNS,
+   };
+
+   static const char cfa_patterns[4][CFA_NUM_PATTERNS] = {                                                                                       
+       [CFA_BGGR] = {CFA_BLUE, CFA_GREEN, CFA_GREEN, CFA_RED},
+       [CFA_GBRG] = {CFA_GREEN, CFA_BLUE, CFA_RED, CFA_GREEN},
+       [CFA_GRBG] = {CFA_GREEN, CFA_RED, CFA_BLUE, CFA_GREEN},
+       [CFA_RGGB] = {CFA_RED, CFA_GREEN, CFA_GREEN, CFA_BLUE},
+   };
+
+   /* Default ColorMatrix1, when none provided */
+   static const float default_color_matrix1[] = {
+        2.005, -0.771, -0.269,
+       -0.752,  1.688,  0.064,
+       -0.149,  0.283,  0.745
+   };
+
+   static const float default_color_matrix[] = {
+    1.65241882,0.4577964443,-1.38006617,
+    0.2332893869,0.6180949806,0.3874675622,
+    1.946616797,0.05815020787,0.1916200316
+   };
+
+
+   // see libtiff/tif_dirinfo.c 
+   static const float blacklevel =  3995; 
+   static const long whitelevel = 49283; 
+
+
+   unsigned int pattern = CFA_RGGB;                                                                                                          
+   static const short bayerPatternDimensions[] = { 2, 2 };
+
    static const float AsShotNeutral[] = {
-      0.8, 1.0, 0.6,
+      0.5609932672,1,0.5161239079
    };
 
 
@@ -655,7 +677,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     TIFFSetField (tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
     TIFFSetField (tif, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT);
     TIFFSetField (tif, TIFFTAG_CFAREPEATPATTERNDIM, bayerPatternDimensions);
-    TIFFSetField(tif, TIFFTAG_CFAPATTERN, cfa_patterns[pattern]);
+    TIFFSetField (tif, TIFFTAG_CFAPATTERN, cfa_patterns[pattern]);
     // needs to have the "4" depending on definition in ./libtiff/tif_dirinfo.c
     //TIFFSetField(tif, TIFFTAG_CFAPATTERN, 4, cfa_patterns[pattern]);
     //
@@ -672,8 +694,11 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     TIFFSetField (tif, TIFFTAG_CFALAYOUT, 1);
     TIFFSetField (tif, TIFFTAG_CFAPLANECOLOR, 3, "\00\01\02");
 
-    uint32* scan_line = (uint32 *)malloc(width*(sizeof(uint32)));
+    TIFFSetField (tif, TIFFTAG_BLACKLEVEL, 1, &blacklevel);
+    TIFFSetField (tif, TIFFTAG_WHITELEVEL, 1, &whitelevel);
 
+    // store image
+    uint32* scan_line = (uint32 *)malloc(width*(sizeof(uint32)));
     for (int i = 0; i < height; i++) {
          TIFFReadScanline(intif, scan_line, i);
          TIFFWriteScanline(tif, scan_line, i, 0);
@@ -689,6 +714,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 
     }
 
+    /*
 
     // assume input data is in raw format
     int writeDngV2(fs::path dngname, bool wb_and_cc = false) {
@@ -698,7 +724,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 
         vector<int> params;
         params.push_back(IMWRITE_TIFF_COMPRESSION);
-        params.push_back(1/*COMPRESSION_NONE*/);
+        params.push_back(1); // no compression
         vector<uchar> buffer;
         cv::imencode(".tiff", mat_crop, buffer, params);
 
@@ -744,6 +770,8 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 
     }
 
+    */
+
 
     int writeJpgFromRaw() {
         //int bpp = 16;
@@ -772,6 +800,62 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         printMatStats("mat_out", mat_out);
 
         imwrite(dst,mat_out);
+
+      }
+
+    Mat scaleRaw(Mat mat_in, Mat mat_scale) {
+
+        Mat mat_out(height, width, CV_16UC1);
+        const char color_table[2][2] = {
+           { 'b' , 'g'} ,
+           { 'g' , 'r'} ,
+        };
+        
+        int cn = mat_in.channels();
+        float rp,gp,bp;
+        for(int i = 0; i < mat_in.rows; i++) {
+            float* rowPtr = mat_in.ptr<float>(i);
+            for(int j = 0; j < mat_in.cols; j++) {
+
+                // get
+                bp = rowPtr[j*cn + 0]; // B
+                gp = rowPtr[j*cn + 1]; // G
+                rp = rowPtr[j*cn + 2]; // R
+
+                char color = color_table[i%2][j%2];
+                LOGV << "i = " << i << " j = " << j << " color = " << color;
+                int mp; 
+                switch ( color ) {
+                    case 'r':  mp = rp; break;
+                    case 'g':  mp = gp; break;
+                    case 'b':  mp = bp; break;
+                }
+
+                mat_out.at<uchar>(j,i) = mp; 
+
+            }
+        }
+        
+        return mat_out;
+
+    }
+
+
+    Mat correctRawImage(Mat mat_crop) {
+         
+        LOGV << "mat_crop = " << mat_crop.size() << " cont = " << mat_crop.isContinuous() ;
+        
+        Mat mat_bayer1(height, width, CV_16U);
+        demosaicing(mat_crop, mat_bayer1, COLOR_BayerRG2RGB);
+        printMatStats("mat_bayer1", mat_bayer1);
+
+        //Mat mat_out(height, new_width, CV_16UC1);
+        Mat mat_out = correctImageColors(mat_bayer1);
+        printMatStats("mat_out", mat_out);
+
+        mat_out = scaleRaw(mat_crop, mat_out);
+
+        return mat_out;
 
       }
 
@@ -814,31 +898,47 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 
         // TODO: fix bug
         jstr = trim(jstr);
-        //LOGV << "trim = " << jstr ;
+        LOGV << "trim = " << jstr ;
         json jin = json::parse(jstr);
 
-        src =               jin["src"];
-        dst =               jin["dst"];
-        header =            jin["header"];
-        basename =          jin["basename"];
-        datestamp =         jin["datestamp"];
-        system_clock_ns =   jin["system_clock_ns"];
-        steady_clock_ns =   jin["steady_clock_ns"];
-        gain =              jin["gain"];
-        expo =              jin["expo"];
-        sweep_index =       jin["sweep_index"];
-        sweep_total =       jin["sweep_total"];
-        fps =               jin["fps"];
-        delta_ms =          jin["delta_ms"];
-        bpp  =              jin["bpp"];
-        width  =            jin["width"];
-        height  =           jin["height"];
-        bytesperline  =     jin["bytesperline"];
-        datalength  =       jin["datalength"];
-        comment =           jin["comment"];
-        text_north =        jin["text_north"];
-        text_east =         jin["text_east"];
-        command =           jin["command"];
+        // add info/comment key if it exists
+        if (jin.find("info") != jin.end()) {
+           if (jin["info"].find("comment") != jin["info"].end()) {
+                comment = jin["info"]["comment"] ;
+           }
+        }
+
+        // return if json doesn't have time key
+        if (jin.find("time") == jin.end()) {
+            return;
+        }
+
+        // TODO: test all keys for existence before adding
+
+        basename =          jin["info"]["basename"] ;
+        src =               jin["info"]["src"] ;
+        dst =               jin["info"]["dst"] ;
+        header =            jin["info"]["header"] ;
+        command =           jin["info"]["command"] ;
+        text_north =        jin["info"]["text_north"] ;
+        text_east =         jin["info"]["text_east"] ;
+
+        datestamp =         jin["time"]["datestamp"] ;
+        system_clock_ns =   jin["time"]["system_clock_ns"] ;
+        steady_clock_ns =   jin["time"]["steady_clock_ns"] ;
+        fps =               jin["time"]["fps"] ;
+        delta_ms =          jin["time"]["delta_ms"] ;
+
+        gain =              jin["camera"]["gain"] ;
+        expo =              jin["camera"]["expo"] ;
+        sweep_index =       jin["camera"]["sweep_index"] ;
+        sweep_total =       jin["camera"]["sweep_total"] ;
+
+        bpp  =              jin["image"]["bpp"] ;
+        width  =            jin["image"]["width"] ;
+        height  =           jin["image"]["height"] ;
+        bytesperline  =     jin["image"]["bytesperline"] ;
+        datalength  =       jin["image"]["datalength"] ;
 
     
     }
