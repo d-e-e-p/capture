@@ -623,7 +623,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
        -0.149,  0.283,  0.745
    };
 
-   static const float default_color_matrix_all[][9] = {
+   float default_color_matrix_e500[][9] = {
        {1.1443379162342393,-0.10782635494238334,-0.18794570800691868,-0.12896259495372037,0.6898320972579124,0.09833641889318988,0.2350049454827497,-0.19156788352264414,2.4539649443471014},
 {1.5618361244366767,-0.6770416560903025,-0.13381727890329123,0.2690015232857739,1.1716020353623167,0.1075471883241869,0.4068104875721486,0.14173374152283869,1.4645279653326357},
 {1.235622392310436,-0.46837047138260673,-0.17058604622605344,0.2114871860517359,1.0718072563701388,-0.01848089862462183,0.3339362255933924,0.1273212628865369,1.0884122575013373},
@@ -635,11 +635,11 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 
 
    // see libtiff/tif_dirinfo.c 
-   static const float blacklevel_all[] =  {  3995, 3995,   3995,  3995,  3995,  3995 };
-   static const long  whitelevel_all[] =  { 22786, 25031, 27222, 29413, 34090, 38008 };
+   float blacklevel_e500[] =  {  3995, 3995,   3995,  3995,  3995,  3995 };
+   long  whitelevel_e500[] =  { 22786, 25031, 27222, 29413, 34090, 38008 };
 
 
-   static const float AsShotNeutral_all[][3] = {
+   float AsShotNeutral_e500[][3] = {
     {0.1846676035735892,1,11.798030283516159},
     {0.8025433257710743,1,0.5027399552668296},
     {0.7969469182403954,1,0.5089199786284679},
@@ -648,15 +648,49 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     {0.8086229016978972,1,0.36966009909944386}
    };
 
+   float default_color_matrix_e1000[][9] = {
+       {0.9030603237634233,-0.38022935103801475,-0.09167418682237943,0.17665200310678386,0.7038491502263703,0.053991700876739865,0.27838531586697407,0.034179585164516385,0.8376690375907788}
+   };
+
+
+
+   // see libtiff/tif_dirinfo.c 
+   float blacklevel_e1000[] =  {  3926 };
+   long  whitelevel_e1000[] =  { 65535 };
+
+
+   float AsShotNeutral_e1000[][3] = {
+    {0.8191492782539601,1,0.5066818859281862},
+   };
+
 
    int index = gain / 10;
 
-   const float * default_color_matrix = default_color_matrix_all[index];
-   const float blacklevel = blacklevel_all[index];
-   const long  whitelevel = whitelevel_all[index];
-   const float * AsShotNeutral = AsShotNeutral_all[index];
+   float * default_color_matrix;
+   float blacklevel;
+   long  whitelevel;
+   float * AsShotNeutral;
 
-   LOGV << "gain = " << gain << " so index = " << index;
+   switch ( expo ) {
+     case 500:  
+         default_color_matrix = default_color_matrix_e500[index];
+         blacklevel = blacklevel_e500[index];
+         whitelevel = whitelevel_e500[index];
+         AsShotNeutral = AsShotNeutral_e500[index];
+         break;
+     case 1000:  
+         default_color_matrix = default_color_matrix_e1000[0];
+         blacklevel = blacklevel_e1000[0];
+         whitelevel = whitelevel_e1000[0];
+         AsShotNeutral = AsShotNeutral_e1000[0];
+         break;
+     default:
+         LOGE << "undefined matrix at expo = " << expo;
+         break;
+   }
+
+
+   LOGV << "expo = " << expo << " gain = " << gain << " so index = " << index;
    LOGV << "blacklevel, whitelevel = " << blacklevel << " , " << whitelevel;
 
 
