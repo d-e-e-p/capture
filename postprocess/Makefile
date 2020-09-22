@@ -31,7 +31,7 @@ all: ../bin/postprocess
 
 ../bin/postprocess: postprocess.cpp postprocess.hpp ../common/Imagedata.hpp
 	$(CC) -o $@ $<  $(CFLAGS) $(OPENCV_FLAGS) $(EXIFOBJ) $(MAGICK_FLAGS)  $(PROFILE) $(TIFF_FLAGS)
-	../bin/postprocess --overwrite --verbose --threads 1 --convert jpg2ann /tmp/tp/ML/202007311350/jpg
+	../bin/postprocess --overwrite --verbose --threads 1 --convert raw2dng /data/ML/2020-09-18-Bolt-Avenal/lens1_9combo_sweep/202009181402/raw/
 
 watch:
 	while true; do \

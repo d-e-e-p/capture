@@ -24,7 +24,7 @@ namespace fs=std::experimental::filesystem;
 //logging
 #include <plog/Log.h>
 //exif
-#include "exif/ExifTool.h"
+//#include "exif/ExifTool.h"
 
 //magick api
 #define MAGICKCORE_HDRI_ENABLE 1
@@ -77,6 +77,7 @@ class Imagedata{
 
     int gain;
     int expo;
+    string lens = "unknown";
     int sweep_index = 0;
     int sweep_total = 0;
     float fps;
@@ -566,6 +567,146 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     }
 
 
+	string getLensGainExpo() {
+	
+	
+	    // eg, from :
+	    //    string lens = "L66892";
+	    //    int gain = 0;
+	    //    int expo = 750;
+	    // return :
+	    //      L66892_G000E0750
+	
+	    char buff[BUFSIZ];
+	    snprintf(buff, sizeof(buff), "%s_G%03dE%04d", lens.c_str(), gain, expo);
+	    string lens_gain_expo = buff;
+	
+	    return lens_gain_expo;
+	        
+	}
+	
+	// see https://stackoverflow.com/questions/13172158/c-split-string-by-line/48837366
+	vector<string> split_string(const string& str, const string& delimiter) {
+	    vector<string> strings;
+	 
+	    string::size_type pos = 0;
+	    string::size_type prev = 0;
+	    while ((pos = str.find(delimiter, prev)) != string::npos)
+	    {
+	        strings.push_back(str.substr(prev, pos - prev));
+	        prev = pos + 1;
+	    }
+	 
+	    // To get the last substring (or only, if delimiter is not found)
+	    strings.push_back(str.substr(prev));
+	 
+	    return strings;
+	}
+	 
+	
+	void define_ccm( float (*colorMatrix)[9], float (*asShotNeutral)[3], float *blacklevel, long *whitelevel) {
+	
+	
+	    string res =  R"STR(
+	img_L66892_G000E0500/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5011979284197485 1 0.5407604376894778\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.2958177228228411 -0.5332626919964376 -0.1351604723718533 -0.02289028335453374 0.6595808399945965 0.08178592999915879 0.13552872891520645 -0.011773095419839754 0.8323192361736788\" -ColorMatrix2=\"1.2958177228228411 -0.5332626919964376 -0.1351604723718533 -0.02289028335453374 0.6595808399945965 0.08178592999915879 0.13552872891520645 -0.011773095419839754 0.8323192361736788\" -IFD0:BlackLevel=3887 -IFD0:WhiteLevel=41982 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3887 -SubIFD:WhiteLevel=41982  -o results/img_L66892_G000E0500/corrected.dng  inputs/images/img_L66892_G000E0500.dng",
+	img_L66892_G000E0750/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5036122862855583 1 0.4746498693995717\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.5221647274263255 -0.5991518843915478 -0.18663442804069663 0.014646276285915253 0.8655161464242636 0.0640009457298411 0.2816238741133832 0.11374075233421263 1.1589449407522703\" -ColorMatrix2=\"1.5221647274263255 -0.5991518843915478 -0.18663442804069663 0.014646276285915253 0.8655161464242636 0.0640009457298411 0.2816238741133832 0.11374075233421263 1.1589449407522703\" -IFD0:BlackLevel=3904 -IFD0:WhiteLevel=65535 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3904 -SubIFD:WhiteLevel=65535  -o results/img_L66892_G000E0750/corrected.dng  inputs/images/img_L66892_G000E0750.dng",
+	img_L66892_G010E0500/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5022584650803694 1 0.5490771623896834\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.3072384905033592 -0.4924552198198806 -0.15411938488212162 0.01622567678222471 0.6487025215576826 0.044743595907065975 0.14838784525090634 0.1084873898672322 0.7614764142898587\" -ColorMatrix2=\"1.3072384905033592 -0.4924552198198806 -0.15411938488212162 0.01622567678222471 0.6487025215576826 0.044743595907065975 0.14838784525090634 0.1084873898672322 0.7614764142898587\" -IFD0:BlackLevel=3864 -IFD0:WhiteLevel=48309 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3864 -SubIFD:WhiteLevel=48309  -o results/img_L66892_G010E0500/corrected.dng  inputs/images/img_L66892_G010E0500.dng",
+	img_L66892_G010E0750/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5199995994247161 1 0.41967757911589837\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"0.9462332331412311 -0.42187910095723086 -0.0761388482247373 0.048947855763703925 0.8682793053325203 0.1405836996154995 0.26845496139334357 0.08959554754249749 1.4424358673940543\" -ColorMatrix2=\"0.9462332331412311 -0.42187910095723086 -0.0761388482247373 0.048947855763703925 0.8682793053325203 0.1405836996154995 0.26845496139334357 0.08959554754249749 1.4424358673940543\" -IFD0:BlackLevel=3740 -IFD0:WhiteLevel=65535 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3740 -SubIFD:WhiteLevel=65535  -o results/img_L66892_G010E0750/corrected.dng  inputs/images/img_L66892_G010E0750.dng",
+	img_L66892_G010E1000/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.49125349480840586 1 0.5414605072377565\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.1713793168848952 -0.4729608728669792 -0.165124582727417 0.1496465348112792 0.8927539329924519 0.05511477480922973 0.1668742664960823 0.03676630277547498 1.0430034307481963\" -ColorMatrix2=\"1.1713793168848952 -0.4729608728669792 -0.165124582727417 0.1496465348112792 0.8927539329924519 0.05511477480922973 0.1668742664960823 0.03676630277547498 1.0430034307481963\" -IFD0:BlackLevel=4233 -IFD0:WhiteLevel=65535 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=4233 -SubIFD:WhiteLevel=65535  -o results/img_L66892_G010E1000/corrected.dng  inputs/images/img_L66892_G010E1000.dng",
+	img_L66892_G025E0500/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5038893363044865 1 0.5395972524409923\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.2164301088543605 -0.4831815001194897 -0.1542815440395757 0.047799415048431826 0.8769597885667084 0.05656477145713695 0.18196802287471409 0.03471622213214183 0.8361537470041409\" -ColorMatrix2=\"1.2164301088543605 -0.4831815001194897 -0.1542815440395757 0.047799415048431826 0.8769597885667084 0.05656477145713695 0.18196802287471409 0.03471622213214183 0.8361537470041409\" -IFD0:BlackLevel=3961 -IFD0:WhiteLevel=54277 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3961 -SubIFD:WhiteLevel=54277  -o results/img_L66892_G025E0500/corrected.dng  inputs/images/img_L66892_G025E0500.dng",
+	img_L66892_G025E0750/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.49392369826711213 1 0.5366382315730087\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.2804800009050061 -0.4687383883650139 -0.17444136546747202 0.15531027594304297 0.840080800638925 0.07617530241038767 0.16384805474778702 0.032498533185912414 0.9190173350224982\" -ColorMatrix2=\"1.2804800009050061 -0.4687383883650139 -0.17444136546747202 0.15531027594304297 0.840080800638925 0.07617530241038767 0.16384805474778702 0.032498533185912414 0.9190173350224982\" -IFD0:BlackLevel=4196 -IFD0:WhiteLevel=65535 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=4196 -SubIFD:WhiteLevel=65535  -o results/img_L66892_G025E0750/corrected.dng  inputs/images/img_L66892_G025E0750.dng",
+	img_L66892_G025E1000/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.49786740324351164 1 0.5253682041507989\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.2864062820751776 -0.6178964937469533 -0.1392740069677594 0.43301500170025997 0.9617494104362232 0.1532783159236128 0.16587699867296601 -0.059164801578771894 0.9402011891474028\" -ColorMatrix2=\"1.2864062820751776 -0.6178964937469533 -0.1392740069677594 0.43301500170025997 0.9617494104362232 0.1532783159236128 0.16587699867296601 -0.059164801578771894 0.9402011891474028\" -IFD0:BlackLevel=4203 -IFD0:WhiteLevel=65535 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=4203 -SubIFD:WhiteLevel=65535  -o results/img_L66892_G025E1000/corrected.dng  inputs/images/img_L66892_G025E1000.dng",
+	img_L69262_G000E1000/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5297454254192975 1 0.5237138213011162\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.1172564735844537 -0.4915336329213369 -0.14229156540987842 0.14069816487650372 0.8365620910800411 0.05529019391607774 0.16332302283849298 0.03426562894541191 0.8481173198511673\" -ColorMatrix2=\"1.1172564735844537 -0.4915336329213369 -0.14229156540987842 0.14069816487650372 0.8365620910800411 0.05529019391607774 0.16332302283849298 0.03426562894541191 0.8481173198511673\" -IFD0:BlackLevel=3854 -IFD0:WhiteLevel=32804 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3854 -SubIFD:WhiteLevel=32804  -o results/img_L69262_G000E1000/corrected.dng  inputs/images/img_L69262_G000E1000.dng",
+	img_L69262_G025E0750/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5333930916368275 1 0.5254899782591469\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.1095049828979313 -0.4823846125961201 -0.13780252288475095 0.14851156627852577 0.8266083253381107 0.05537088080805124 0.16156153086843753 0.034414507384565036 0.825454790484315\" -ColorMatrix2=\"1.1095049828979313 -0.4823846125961201 -0.13780252288475095 0.14851156627852577 0.8266083253381107 0.05537088080805124 0.16156153086843753 0.034414507384565036 0.825454790484315\" -IFD0:BlackLevel=3833 -IFD0:WhiteLevel=30789 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3833 -SubIFD:WhiteLevel=30789  -o results/img_L69262_G025E0750/corrected.dng  inputs/images/img_L69262_G025E0750.dng",
+	img_L69262_G025E1000/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5343713313079377 1 0.5280081030131426\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.148009553177839 -0.47578116445103735 -0.1416571178874706 -0.0013003504869671945 0.6904853547583646 0.04593064554548883 0.1347847621268289 0.07211459200373635 0.9012647125574795\" -ColorMatrix2=\"1.148009553177839 -0.47578116445103735 -0.1416571178874706 -0.0013003504869671945 0.6904853547583646 0.04593064554548883 0.1347847621268289 0.07211459200373635 0.9012647125574795\" -IFD0:BlackLevel=3835 -IFD0:WhiteLevel=40506 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3835 -SubIFD:WhiteLevel=40506  -o results/img_L69262_G025E1000/corrected.dng  inputs/images/img_L69262_G025E1000.dng",
+	img_L69262_G050E0500/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5239088539494565 1 0.5216607118223326\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.0875726721547596 -0.45527572087781865 -0.14018257465686415 0.1394470897799676 0.8337647835673403 0.05537443095378753 0.16419264288626187 0.03452512256007418 0.8237951617842922\" -ColorMatrix2=\"1.0875726721547596 -0.45527572087781865 -0.14018257465686415 0.1394470897799676 0.8337647835673403 0.05537443095378753 0.16419264288626187 0.03452512256007418 0.8237951617842922\" -IFD0:BlackLevel=3933 -IFD0:WhiteLevel=26441 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3933 -SubIFD:WhiteLevel=26441  -o results/img_L69262_G050E0500/corrected.dng  inputs/images/img_L69262_G050E0500.dng",
+	img_L69262_G050E0750/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5305403726875716 1 0.5199054575672025\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.1272116994219872 -0.48108497229079605 -0.1395498153615613 0.10023878970855149 0.8506553706262815 0.0750094490948341 0.1570955922574256 0.014898494054985861 0.7576277569779336\" -ColorMatrix2=\"1.1272116994219872 -0.48108497229079605 -0.1395498153615613 0.10023878970855149 0.8506553706262815 0.0750094490948341 0.1570955922574256 0.014898494054985861 0.7576277569779336\" -IFD0:BlackLevel=3904 -IFD0:WhiteLevel=39992 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3904 -SubIFD:WhiteLevel=39992  -o results/img_L69262_G050E0750/corrected.dng  inputs/images/img_L69262_G050E0750.dng",
+	img_L69262_G050E1000/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5361238091616716 1 0.5264241280721809\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.2500806592420843 -0.5338592618004717 -0.1466470277093814 0.09336602040862428 0.8155884855311438 0.09316507336475904 0.17155643564558815 0.03839063611884328 0.8479538818219754\" -ColorMatrix2=\"1.2500806592420843 -0.5338592618004717 -0.1466470277093814 0.09336602040862428 0.8155884855311438 0.09316507336475904 0.17155643564558815 0.03839063611884328 0.8479538818219754\" -IFD0:BlackLevel=3891 -IFD0:WhiteLevel=56926 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3891 -SubIFD:WhiteLevel=56926  -o results/img_L69262_G050E1000/corrected.dng  inputs/images/img_L69262_G050E1000.dng",
+	img_L69262_G075E0500/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5338674100242935 1 0.5266023127910471\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.1329890615738374 -0.4881732658829427 -0.14196922554867467 0.12775718833055238 0.8431271681911314 0.08440771313404193 0.1465669651024354 0.033960732243553705 0.857507580048626\" -ColorMatrix2=\"1.1329890615738374 -0.4881732658829427 -0.14196922554867467 0.12775718833055238 0.8431271681911314 0.08440771313404193 0.1465669651024354 0.033960732243553705 0.857507580048626\" -IFD0:BlackLevel=3908 -IFD0:WhiteLevel=36438 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3908 -SubIFD:WhiteLevel=36438  -o results/img_L69262_G075E0500/corrected.dng  inputs/images/img_L69262_G075E0500.dng",
+	img_L69262_G075E0750/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5444208523700148 1 0.52669439528777\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.1643977886892405 -0.4826074249827946 -0.14283419648934859 0.14663792142752274 0.8702174590603671 0.05608020435417549 0.20091584624504055 0.03643521907080845 0.884627609334895\" -ColorMatrix2=\"1.1643977886892405 -0.4826074249827946 -0.14283419648934859 0.14663792142752274 0.8702174590603671 0.05608020435417549 0.20091584624504055 0.03643521907080845 0.884627609334895\" -IFD0:BlackLevel=3818 -IFD0:WhiteLevel=52617 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3818 -SubIFD:WhiteLevel=52617  -o results/img_L69262_G075E0750/corrected.dng  inputs/images/img_L69262_G075E0750.dng",
+	img_L69262_G100E0500/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5374788680995894 1 0.5297571374157877\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.1760576085015804 -0.4401699570650032 -0.15740251438469904 0.10610808307308084 0.8398551338185003 0.04719755548169963 0.186306874938527 0.18147555453893865 0.8248486750420352\" -ColorMatrix2=\"1.1760576085015804 -0.4401699570650032 -0.15740251438469904 0.10610808307308084 0.8398551338185003 0.04719755548169963 0.186306874938527 0.18147555453893865 0.8248486750420352\" -IFD0:BlackLevel=3846 -IFD0:WhiteLevel=47494 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3846 -SubIFD:WhiteLevel=47494  -o results/img_L69262_G100E0500/corrected.dng  inputs/images/img_L69262_G100E0500.dng",
+	)STR";
+	    //cout << " res = " << res;
+	
+	    // eg string lens_gain_expo = "_L69262_G100E0500";
+	    string lens_gain_expo = getLensGainExpo();
+
+	    auto lines = split_string(res, "\n");
+	    string match_bl;
+	    int i = 1;
+	    for (auto itr = lines.begin(); itr != lines.end(); itr++) {
+	        string line = *itr;
+	        //cout << "line: " << i++ << " - \"" << line << "\"\n";
+	        regex re;
+	        smatch match;
+	
+	        re = "img_" + lens_gain_expo; 
+	
+	        regex_search(line, match, re);
+	        LOGV << "looking for : " << "img_" + lens_gain_expo << " match.size= " << match.size() ;
+	        //LOGV << "line = " << line;
+
+	        if (match.size() > 0) {
+	            LOGV << "FOUND";
+	            re = "BlackLevel=([0-9]*)";
+	            if (regex_search(line, match, re) && match.size() > 1) {
+	                *blacklevel = stof(match.str(1));
+	            } else {
+	                LOGE << "NO MATCH BL in: " << line;
+	            }
+	
+	            re = "WhiteLevel=([0-9]*)";
+	            if (regex_search(line, match, re) && match.size() > 1) {
+	                *whitelevel = stol(match.str(1));
+	            } else {
+	                LOGE << "NO MATCH WL in: " << line;
+	            }
+	
+	            re = "AsShotNeutral=..([[:digit:].[:space:]]*)";
+	            if (regex_search(line, match, re) && match.size() > 1) {
+	                string match_str = match.str(1);
+	                //cout << "asshotneutral = " << match_str << endl;
+	                auto nums = split_string(match_str, " ");
+	                int j = 0;
+	                for (auto itr2 = nums.begin(); itr2 != nums.end(); itr2++) {
+	                    string match_value = *itr2;
+	                    float value = stof(match_value);
+	                    (*asShotNeutral)[j++] = value;
+	                    //cout << "asShotNeutral "<< j << "  = " << value << endl;
+	                }
+	            } else {
+	                LOGE << "NO MATCH WB in: " << line;
+	            }
+	
+	            re = "ColorMatrix1=..([[:digit:]-.[:space:]]*)";
+	            if (regex_search(line, match, re) && match.size() > 1) {
+	                string match_str = match.str(1);
+	                //cout << "ccm = " << match_str << endl;
+	                auto nums = split_string(match_str, " ");
+	                int j = 0;
+	                for (auto itr2 = nums.begin(); itr2 != nums.end(); itr2++) {
+	                    string match_value = *itr2;
+	                    float value = stof(match_value);
+	                    (*colorMatrix)[j++] = value;
+	                    //cout << "colorMatrix "<< j << "  = " << value << endl;
+	                }
+	            } else {
+	                LOGE << "NO MATCH CCM in: " << line;
+	            }
+	
+	
+	
+	            return;
+	       }
+	
+	    }
+
+        LOGE << "no match for gain expo for key  = " << lens_gain_expo;
+	    // no match!
+	
+	}
+	
+	
     int writeDng(string dngname, bool wb_and_cc = false) {
  
    enum illuminant {
@@ -623,74 +764,15 @@ int writeAnnotated(Imagedata image, fs::path dst) {
        -0.149,  0.283,  0.745
    };
 
-   float default_color_matrix_e500[][9] = {
-       {1.1443379162342393,-0.10782635494238334,-0.18794570800691868,-0.12896259495372037,0.6898320972579124,0.09833641889318988,0.2350049454827497,-0.19156788352264414,2.4539649443471014},
-{1.5618361244366767,-0.6770416560903025,-0.13381727890329123,0.2690015232857739,1.1716020353623167,0.1075471883241869,0.4068104875721486,0.14173374152283869,1.4645279653326357},
-{1.235622392310436,-0.46837047138260673,-0.17058604622605344,0.2114871860517359,1.0718072563701388,-0.01848089862462183,0.3339362255933924,0.1273212628865369,1.0884122575013373},
-{0.909408660184195,-0.25969928667491093,-0.20735481354881566,0.15397284881769788,0.9720124773779609,-0.14450898557343056,0.26106196361463624,0.1129087842502351,0.7122965496700387},
-{0.8693458365141743,-0.299024791509449,-0.09639856247250468,0.29479215896301353,0.9898730084206849,0.0520620223204653,0.34461791265032654,0.14953879945696477,0.754712484069007},
-{0.9094990450540301,-0.36684445065557403,-0.08412570047455128,0.15143256581513984,0.7171068593149644,0.05865101574720833,0.30806049340868796,0.0239280793775006,0.8128452693528597}
-   };
 
+   float blacklevel = 0;
+   long  whitelevel = 65535;
+   float asShotNeutral[] = {1,1,1};
+   float colorMatrix[]   = {1,1,1, 1,1,1, 1,1,1};
 
+   define_ccm( &colorMatrix, &asShotNeutral, &blacklevel, &whitelevel);
 
-   // see libtiff/tif_dirinfo.c 
-   float blacklevel_e500[] =  {  3995, 3995,   3995,  3995,  3995,  3995 };
-   long  whitelevel_e500[] =  { 22786, 25031, 27222, 29413, 34090, 38008 };
-
-
-   float AsShotNeutral_e500[][3] = {
-    {0.1846676035735892,1,11.798030283516159},
-    {0.8025433257710743,1,0.5027399552668296},
-    {0.7969469182403954,1,0.5089199786284679},
-    {0.7913505107097164,1,0.5151000019901062},
-    {0.8267934727227962,1,0.4296867644723949},
-    {0.8086229016978972,1,0.36966009909944386}
-   };
-
-   float default_color_matrix_e1000[][9] = {
-       {0.9030603237634233,-0.38022935103801475,-0.09167418682237943,0.17665200310678386,0.7038491502263703,0.053991700876739865,0.27838531586697407,0.034179585164516385,0.8376690375907788}
-   };
-
-
-
-   // see libtiff/tif_dirinfo.c 
-   float blacklevel_e1000[] =  {  3926 };
-   long  whitelevel_e1000[] =  { 65535 };
-
-
-   float AsShotNeutral_e1000[][3] = {
-    {0.8191492782539601,1,0.5066818859281862},
-   };
-
-
-   int index = gain / 10;
-
-   float * default_color_matrix;
-   float blacklevel;
-   long  whitelevel;
-   float * AsShotNeutral;
-
-   switch ( expo ) {
-     case 500:  
-         default_color_matrix = default_color_matrix_e500[index];
-         blacklevel = blacklevel_e500[index];
-         whitelevel = whitelevel_e500[index];
-         AsShotNeutral = AsShotNeutral_e500[index];
-         break;
-     case 1000:  
-         default_color_matrix = default_color_matrix_e1000[0];
-         blacklevel = blacklevel_e1000[0];
-         whitelevel = whitelevel_e1000[0];
-         AsShotNeutral = AsShotNeutral_e1000[0];
-         break;
-     default:
-         LOGE << "undefined matrix at expo = " << expo;
-         break;
-   }
-
-
-   LOGV << "expo = " << expo << " gain = " << gain << " so index = " << index;
+   LOGV << "lens = " << lens  << " gain = " << gain << " expo = " << expo ;
    LOGV << "blacklevel, whitelevel = " << blacklevel << " , " << whitelevel;
 
 
@@ -743,9 +825,9 @@ int writeAnnotated(Imagedata image, fs::path dst) {
     TIFFSetField (tif, TIFFTAG_MAKE, "__SNAPPY__");
     TIFFSetField (tif, TIFFTAG_MODEL, "__WEED__");
     TIFFSetField (tif, TIFFTAG_UNIQUECAMERAMODEL, imageinfo.c_str());
-    TIFFSetField (tif, TIFFTAG_COLORMATRIX1, 9, default_color_matrix);
-    TIFFSetField (tif, TIFFTAG_COLORMATRIX2, 9, default_color_matrix);
-    TIFFSetField (tif, TIFFTAG_ASSHOTNEUTRAL, 3, AsShotNeutral);
+    TIFFSetField (tif, TIFFTAG_COLORMATRIX1, 9, colorMatrix);
+    TIFFSetField (tif, TIFFTAG_COLORMATRIX2, 9, colorMatrix);
+    TIFFSetField (tif, TIFFTAG_ASSHOTNEUTRAL, 3, asShotNeutral);
     TIFFSetField (tif, TIFFTAG_CFALAYOUT, 1);
     TIFFSetField (tif, TIFFTAG_CFAPLANECOLOR, 3, "\00\01\02");
 
@@ -955,12 +1037,20 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         jstr = trim(jstr);
         LOGV << "trim = " << jstr ;
         json jin = json::parse(jstr);
+        LOGV << "done parsing json";
 
         // add info/comment key if it exists
         if (jin.find("info") != jin.end()) {
            if (jin["info"].find("comment") != jin["info"].end()) {
                 comment = jin["info"]["comment"] ;
            }
+        }
+
+        // add camera/lens key if it exists
+        if (jin.find("camera") != jin.end()) {
+           if (jin["camera"].find("lens") != jin["camera"].end()) {
+                lens = jin["camera"]["lens"] ;
+           } 
         }
 
         // return if json doesn't have time key
@@ -1026,6 +1116,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         jout["time"]["fps"]=                prd(fps,0);
         jout["time"]["delta_ms"]=           prd(delta_ms,0);
 
+        jout["camera"]["lens"]=             lens;
         jout["camera"]["gain"]=             gain;
         jout["camera"]["expo"]=             expo;
         jout["camera"]["sweep_index"]=      sweep_index;
