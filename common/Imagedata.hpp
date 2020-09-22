@@ -24,7 +24,7 @@ namespace fs=std::experimental::filesystem;
 //logging
 #include <plog/Log.h>
 //exif
-//#include "exif/ExifTool.h"
+#include "exif/ExifTool.h"
 
 //magick api
 #define MAGICKCORE_HDRI_ENABLE 1
@@ -701,7 +701,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 	
 	    }
 
-        LOGE << "no match for gain expo for key  = " << lens_gain_expo;
+        LOGE << "no match in lens/gain/expo -> ccm table for key  = " << lens_gain_expo;
 	    // no match!
 	
 	}
