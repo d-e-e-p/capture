@@ -39,7 +39,7 @@ capture-helper.o: capture-helper.c
 watch:
 	while true; do \
 		make all; \
-		../bin/capture --frames 1 --comment "new camera" --verbose ; \
+		../bin/capture --focus --verbose ; \
 		inotifywait -e close_write capture.cpp capture.hpp capture-helper.c ../common/Imagedata.hpp; \
 	done
 

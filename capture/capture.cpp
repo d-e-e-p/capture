@@ -42,7 +42,10 @@ struct Options {
     bool noexif = false;
     bool display = false;
     bool interactive = false;
+    bool focus = false;
     bool verbose = false;
+
+    int blur = 10; // gaussian blur for focus detection
 
     string comment = "";
 
@@ -66,6 +69,12 @@ struct Globals {
     bool toggle_c_colorcorrect = false;
 
     Mat ccm;
+
+    // for focus
+    Mat mat_canny;
+    Mat mat_scharr;
+    Mat mat_lap_var;
+    Mat mat_dft_mean;
 
 } g;
 
@@ -250,6 +259,7 @@ void PrintHelp() {
     # what to show
          --display:           display window
          --interactive        equiv to --display --nosave --frames 100000
+         --focus              interactive focus
 
          --verbose:           verbose
          --help:              show help
@@ -330,11 +340,16 @@ void setupDirs() {
 }
 
 void tbCallbackGain(int value,void* userdata) {
+    opt.auto_gain = false;
     setGain(value);
 } 
 
 void tbCallbackExpo(int value,void* userdata) {
     setExposure(value);
+} 
+
+void tbCallbackBlur(int value,void* userdata) {
+    opt.blur = value;
 } 
 
 void buttonCallback(int state, void *font) {
@@ -406,8 +421,12 @@ void setupCamera(void) {
         resizeWindow(g.mainWindowName, g.imagewidth, g.imageheight);
         createButton("save image",buttonCallback,NULL,QT_PUSH_BUTTON,1);
         //int cvCreateTrackbar(const char* trackbar_name, const char* window_name, int* value, int count, CvTrackbarCallback on_change=NULL )¶
+        LOGV << "creating trackbar with gain = " << opt.gain;
         createTrackbar( "gain", g.mainWindowName, &opt.gain, 480,   tbCallbackGain);
         createTrackbar( "expo", g.mainWindowName, &opt.expo, 3000,  tbCallbackExpo);
+        if (opt.focus) {
+            createTrackbar( "blur", g.mainWindowName, &opt.blur, 20,  tbCallbackBlur);
+        }
     }
 
     return;
@@ -551,36 +570,70 @@ Mat correctImageColors (Imagedata* image, Mat mat_in_int) {
     normalize(mat_wb, mat_wb_norm, 1.0, 0.0, NORM_MINMAX);
     printMatStats("mat_wb_norm",   mat_wb_norm);
 
-    return mat_wb_norm;
+    Mat mat_res;
+    mat_wb_norm.convertTo(mat_res, CV_8UC3, 255.0);
+    printMatStats("mat_res",   mat_res);
+
+    return mat_res;
 }
 
-//http://www.programmersought.com/article/2549148775/
-float get_sobel_mean(cv::Mat img) {
-    cv::Mat imageSobel;
-    Sobel(img, imageSobel, CV_8U, 1, 1);
-    printMatStats("get_sobel_mean", imageSobel);
-    double meanValue = mean(imageSobel)[0];
-    return meanValue * 50.0;
+void showMessageOnImage(Mat mat, string label, float value ) {
+        
+    char buff[BUFSIZ];
+    snprintf(buff, sizeof(buff), "%s : %.0f", label.c_str(), value);
+    string text = buff;
+
+    putText(mat,
+            text,
+            Point(100, mat.rows - 100), //bot-left position
+            FONT_HERSHEY_DUPLEX,
+            5.0,
+            CV_RGB(255, 0, 0), 
+            5.0);
+
 }
+//http://www.programmersought.com/article/2549148775/
+float get_scharr_mean(cv::Mat img) {
+    Mat scharr_dx;
+    Mat scharr_dy;
+    Mat scharr;
+    Scharr(img, scharr_dx, CV_8U, 1, 0, 1, 0, BORDER_DEFAULT);
+    Scharr(img, scharr_dy, CV_8U, 0, 1, 1, 0, BORDER_DEFAULT);
+    add(scharr_dx, scharr_dy, scharr);
+
+    double meanValueX = mean(scharr_dx)[0];
+    double meanValueY = mean(scharr_dy)[0];
+    double meanValue = mean(scharr)[0];
+
+    meanValue *= 2.5;
+    normalize(scharr, scharr, 255, 0, NORM_MINMAX);
+    cvtColor(scharr, g.mat_scharr, COLOR_GRAY2RGB);
+    printMatStats("get_scharr_mean", g.mat_scharr);
+    showMessageOnImage(g.mat_scharr, "scharr", meanValue);
+    LOGV << " scharr meanValueX " << meanValueX << " meanValueY: " << meanValueY << " meanValue " << meanValue;
+    return meanValue ;
+}
+
 float get_lap_var(cv::Mat img) {
-    cv::Mat dst;
+    cv::Mat lap;
     //Laplace(f) = \dfrac{\partial^{2} f}{\partial x^{2}} + \dfrac{\partial^{2} f}{\partial y^{2}}
     int kernel_size = 3;
     int ddepth = CV_8U;
-    Laplacian(img, dst, ddepth, kernel_size, BORDER_DEFAULT);
-    printMatStats("get_lap_var", dst);
+    Laplacian(img, lap, ddepth, kernel_size, BORDER_DEFAULT);
     Mat tmp_m, tmp_sd;
     double m = 0, sd = 0;
-    meanStdDev(dst, tmp_m, tmp_sd);
+    meanStdDev(lap, tmp_m, tmp_sd);
     m = tmp_m.at<double>(0, 0);
     sd = tmp_sd.at<double>(0, 0);
-    //cout << "laplacian......... Mean: " << m << " ,laplacian StdDev: " << sd << endl;
+    LOGV << "laplacian  Mean: " << m << " ,laplacian StdDev: " << sd;
+    cvtColor(lap, g.mat_lap_var, COLOR_GRAY2RGB);
+    printMatStats("get_lap_var", g.mat_lap_var);
+    showMessageOnImage(g.mat_lap_var, "laplacian", sd);
     return sd ;
 }
  
 float get_img_dft_mean(cv::Mat input)
 {
-    cvtColor(input, input, COLOR_BGR2GRAY);
     // N = 2^p * 3^q * 5^r for some integer p, q, r.
     int w = getOptimalDFTSize(input.cols);
     int h = getOptimalDFTSize(input.rows);
@@ -608,26 +661,28 @@ float get_img_dft_mean(cv::Mat input)
             }
         }
     }
-    return mean / count;
+    float fudge = 400;
+    return (mean / count) / fudge;
 }
 
 float get_canny_mean(Mat frame) {
     unsigned long int sum = 0;
     unsigned long int size = frame.cols * frame.rows;
 
-    Mat edges;
-    cvtColor(frame, edges, cv::COLOR_BGR2GRAY);
-    GaussianBlur(edges, edges, Size(7, 7), 1.5, 1.5);
+    Mat edges = frame;
     Canny(edges, edges, 0, 30, 3);
-    printMatStats("get_canny_mean", edges);
 
     MatIterator_<uchar> it, end;
     for (it = edges.begin<uchar>(), end = edges.end<uchar>(); it != end; ++it) {
         sum += *it != 0;
     }
-
     const float fac = 0.8 * 1000;
-    return  fac * (double) sum / (double) size;
+    float focus =  fac * (double) sum / (double) size;
+
+    cvtColor(edges, g.mat_canny, COLOR_GRAY2RGB);
+    printMatStats("get_canny_mean", g.mat_canny);
+    showMessageOnImage(g.mat_canny, "canny", focus);
+    return  focus;
 
 }
 
@@ -641,19 +696,30 @@ void estimateSharpness(Imagedata* image, Mat& mat_in) {
     unsigned long int sum = 0;
     unsigned long int size = mat_in.cols * mat_in.rows;
     Mat frame;
-    mat_in.convertTo(frame, CV_8U, 255.0/65536.0);
-    normalize(frame, frame, 255, 0, NORM_MINMAX);
+    //mat_in.convertTo(frame, CV_8U, 255.0/65536.0);
+    //normalize(frame, frame, 255, 0, NORM_MINMAX);
+    normalize(mat_in, frame, 255, 0, NORM_MINMAX);
+    cvtColor(frame, frame, COLOR_BGR2GRAY);
+    float blur = (float) opt.blur / 10.0;
+    GaussianBlur(frame, frame, Size(0, 0), blur, blur);
     printMatStats("frame", frame);
 
     image->focus1 = get_canny_mean(frame);
-    //image->focus2 = get_sobel_mean(frame);
-    //image->focus3 = get_lap_var(frame);
-    //image->focus4 = get_img_dft_mean(frame);
+    image->focus2 = get_scharr_mean(frame);
+    image->focus3 = get_lap_var(frame);
+    image->focus4 = get_img_dft_mean(frame);
 
-    //LOGV << "f1=" << image->focus1 << " f2=" << image->focus2 << " f3=" << image->focus3 << " f4=" << image->focus4;
-    LOGV << "f1=" << image->focus1 ;
+    //LOGV << "f1=" << image->focus1 ;
+    char buff[BUFSIZ];
+    snprintf(buff, sizeof(buff),                                                      
+        "%s expo=%d gain=%d blur=%d canny=%.0f scharr=%.0f lap=%.0f dft=%.0f",
+                 image->basename.c_str(), opt.expo, opt.gain, opt.blur,
+                image->focus1, image->focus2, image->focus3, image->focus4);
+    image->text_focus = buff;
+    LOGI << image->text_focus;
 
 }
+
 
 void showImage(Imagedata* image) {
 
@@ -664,7 +730,15 @@ void showImage(Imagedata* image) {
     // step 2: bayer
     Mat mat_bayer1(image->height, image->width, CV_8U);
     demosaicing(mat_crop, mat_bayer1, COLOR_BayerRG2RGB);
+    mat_bayer1.convertTo(mat_bayer1, CV_8UC3, 255.0/65536.0);
+
     printMatStats("mat_bayer1", mat_bayer1);
+
+
+    //focus estimate
+    if (opt.focus) {
+        estimateSharpness(image, mat_bayer1);
+    }
 
     Mat mat_todisplay;
     if (g.toggle_c_colorcorrect) {
@@ -672,11 +746,6 @@ void showImage(Imagedata* image) {
     } else {
         mat_todisplay = mat_bayer1;
     }
-
-    imshow(g.mainWindowName,mat_todisplay);
-
-    //focus estimate
-    estimateSharpness(image, mat_bayer1);
 
     //annotations
 	image->createAnnoText();
@@ -691,6 +760,21 @@ void showImage(Imagedata* image) {
 
     displayOverlay(g.mainWindowName, image->text_north, 0);
     displayStatusBar(g.mainWindowName, text_status, 0);
+    if (opt.focus) {
+
+        showMessageOnImage(mat_todisplay, "dft", image->focus4);
+
+        // create 2x2 grid of focus estimate images
+        Mat mat_row1, mat_row2;
+        hconcat(g.mat_canny,   g.mat_scharr,   mat_row1);
+        printMatStats("mat_row1", mat_row1);
+        hconcat(g.mat_lap_var, mat_todisplay, mat_row2);
+        printMatStats("mat_row2", mat_row2);
+        vconcat(mat_row1, mat_row2, mat_todisplay);
+
+    }
+    imshow(g.mainWindowName, mat_todisplay);
+
 
     //hotkeys
     int key = cv::waitKey(1);
@@ -872,7 +956,6 @@ int endLoopCallback( void *ptr, int datalength, struct v4l2_buffer buf, struct v
    if (opt.minutes > 0) {
        chrono::duration<double, milli> elapsed_time = lp.syst_time_this - lp.syst_time_prog;
        int duration_min = chrono::duration_cast<chrono::minutes> (elapsed_time).count();
-       LOGI << "duration_min = " << duration_min;
        if (duration_min == opt.minutes) {
             LOGV << "stopping because duration_min = " << duration_min;
             stop_run = true;
@@ -1123,6 +1206,7 @@ void processArgs(int argc, char** argv) {
         OptNoExif,
         OptDisplay,
         OptInteractive,
+        OptFocus,
         OptVerbose,
         OptComment
     };
@@ -1153,6 +1237,7 @@ void processArgs(int argc, char** argv) {
         {"noexif",        no_argument,        0,    OptNoExif },
         {"display",       no_argument,        0,    OptDisplay },
         {"interactive",   no_argument,        0,    OptInteractive },
+        {"focus",         no_argument,        0,    OptFocus },
         {"verbose",       no_argument,        0,    OptVerbose },
         {"comment",       required_argument,  0,    OptComment },
         {NULL,            0,               NULL,    0}
@@ -1272,6 +1357,15 @@ void processArgs(int argc, char** argv) {
             opt.noraw = true;
             opt.nojpg = true;
             opt.frames = 100000;
+            break;
+        case OptFocus:
+            opt.focus = true;
+            LOGI << "Option: show live view for focus" ;
+            opt.display = true;
+            opt.noraw = true;
+            opt.nojpg = true;
+            opt.frames = 100000;
+            opt.focus = true;
             break;
         case OptVerbose:
             opt.verbose = true;
@@ -1421,9 +1515,11 @@ int getAutoGainValue(int value_expo) {
     float value;
 
     if (opt.lens == "L69262") {
-        value = 267.4 * exp(-(float) value_expo / 500.0);
+        float A = 1587.4;
+        float B = 86.56;
+        value = - B * log (value_expo / A);
         // round to closest 10
-        value = 10 * round(value / 10.0);
+        value = 10.0 * round(value / 10.0);
 
     } else {
         LOGE << "auto gain formula not defined for lens " << opt.lens;

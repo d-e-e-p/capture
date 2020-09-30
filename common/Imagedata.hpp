@@ -24,7 +24,7 @@ namespace fs=std::experimental::filesystem;
 //logging
 #include <plog/Log.h>
 //exif
-//#include "exif/ExifTool.h"
+#include "exif/ExifTool.h"
 
 //magick api
 #define MAGICKCORE_HDRI_ENABLE 1
@@ -101,6 +101,7 @@ class Imagedata{
     string text_north;
     string text_south;
     string text_east;
+    string text_focus;
 
     bool dont_delete_me_yet = false;
 
@@ -253,8 +254,8 @@ class Imagedata{
 
         char buff[BUFSIZ];
         int delta_ms_precision = (delta_ms > 10) ? 0 : 1 ;
-        snprintf(buff, sizeof(buff), "%s %3.0ffps %3.*fms gain=%d exp=%d focus=%.0f%%", 
-                basename.c_str(), fps, delta_ms_precision, delta_ms, gain, expo, focus1);
+        snprintf(buff, sizeof(buff), "%s %3.0ffps %3.*fms gain=%d exp=%d", 
+                basename.c_str(), fps, delta_ms_precision, delta_ms, gain, expo);
         text_north = buff;
 
         if (sweep_total > 0) {
@@ -268,7 +269,6 @@ class Imagedata{
         struct tm * timeinfo = localtime (&rawtime);
 
         strftime (buff,sizeof(buff),": %d %a %b %d %I:%M%p : ",  timeinfo);
-
         text_east = datestamp + buff + comment;
 
     }
