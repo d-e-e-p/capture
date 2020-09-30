@@ -104,8 +104,9 @@ class Imagedata{
 
     bool dont_delete_me_yet = false;
 
-    // share setup with all object members
-    static struct Setup {
+ 
+   // share setup with all object members
+   static struct Setup {
         // for job handling
          future <void> job_queue;
         // TODO: also need to call job_queue.wait();
@@ -123,6 +124,13 @@ class Imagedata{
 
          // for jpg
          bool use_threaded_jpg;
+
+         // for CCM
+         map<string,float> CCM_bl;
+         map<string,long>  CCM_wl;
+         map<string,array<float, 3>>  CCM_asn;
+         map<string,array<float, 9>>  CCM_ccm;
+
     } s ;
 
     //Destructor
@@ -586,7 +594,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 	}
 	
 	// see https://stackoverflow.com/questions/13172158/c-split-string-by-line/48837366
-	vector<string> split_string(const string& str, const string& delimiter) {
+	static vector<string> split_string(const string& str, const string& delimiter) {
 	    vector<string> strings;
 	 
 	    string::size_type pos = 0;
@@ -603,9 +611,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 	    return strings;
 	}
 	 
-	
-	void define_ccm( float (*colorMatrix)[9], float (*asShotNeutral)[3], float *blacklevel, long *whitelevel) {
-	
+	static void defineCCM( ) {
 	
 	    string res =  R"STR(
 	img_L66892_G000E0500/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5011979284197485 1 0.5407604376894778\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.2958177228228411 -0.5332626919964376 -0.1351604723718533 -0.02289028335453374 0.6595808399945965 0.08178592999915879 0.13552872891520645 -0.011773095419839754 0.8323192361736788\" -ColorMatrix2=\"1.2958177228228411 -0.5332626919964376 -0.1351604723718533 -0.02289028335453374 0.6595808399945965 0.08178592999915879 0.13552872891520645 -0.011773095419839754 0.8323192361736788\" -IFD0:BlackLevel=3887 -IFD0:WhiteLevel=41982 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3887 -SubIFD:WhiteLevel=41982  -o results/img_L66892_G000E0500/corrected.dng  inputs/images/img_L66892_G000E0500.dng",
@@ -628,36 +634,36 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 	)STR";
 	    //cout << " res = " << res;
 	
-	    // eg string lens_gain_expo = "_L69262_G100E0500";
-	    string lens_gain_expo = getLensGainExpo();
-
 	    auto lines = split_string(res, "\n");
 	    string match_bl;
 	    int i = 1;
 	    for (auto itr = lines.begin(); itr != lines.end(); itr++) {
 	        string line = *itr;
-	        //cout << "line: " << i++ << " - \"" << line << "\"\n";
+	        LOGV << "line: " << i++ << " - \"" << line << "\"";
 	        regex re;
 	        smatch match;
 	
-	        re = "img_" + lens_gain_expo; 
+	        re = "img_([^/]*)" ; // assume valid lines start with something like img_L69262_G100E0500
 	
 	        regex_search(line, match, re);
-	        LOGV << "looking for : " << "img_" + lens_gain_expo << " match.size= " << match.size() ;
-	        //LOGV << "line = " << line;
+	        if (match.size() == 0) {
+                LOGV << " no match ";
+            } else {
+                string key = match.str(1);
+	            LOGV << "key: " << key << " line: " << line;
 
-	        if (match.size() > 0) {
-	            LOGV << "FOUND";
 	            re = "BlackLevel=([0-9]*)";
 	            if (regex_search(line, match, re) && match.size() > 1) {
-	                *blacklevel = stof(match.str(1));
+	                double blacklevel = stof(match.str(1));
+                    s.CCM_bl[key] = blacklevel;
 	            } else {
 	                LOGE << "NO MATCH BL in: " << line;
 	            }
 	
 	            re = "WhiteLevel=([0-9]*)";
 	            if (regex_search(line, match, re) && match.size() > 1) {
-	                *whitelevel = stol(match.str(1));
+	                long whitelevel = stol(match.str(1));
+                    s.CCM_wl[key] = whitelevel;
 	            } else {
 	                LOGE << "NO MATCH WL in: " << line;
 	            }
@@ -667,12 +673,12 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 	                string match_str = match.str(1);
 	                //cout << "asshotneutral = " << match_str << endl;
 	                auto nums = split_string(match_str, " ");
+                    //std::array<float, 3> asn; 
 	                int j = 0;
 	                for (auto itr2 = nums.begin(); itr2 != nums.end(); itr2++) {
 	                    string match_value = *itr2;
 	                    float value = stof(match_value);
-	                    (*asShotNeutral)[j++] = value;
-	                    //cout << "asShotNeutral "<< j << "  = " << value << endl;
+                        s.CCM_asn[key].at(j++) = value;
 	                }
 	            } else {
 	                LOGE << "NO MATCH WB in: " << line;
@@ -682,172 +688,212 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 	            if (regex_search(line, match, re) && match.size() > 1) {
 	                string match_str = match.str(1);
 	                //cout << "ccm = " << match_str << endl;
+                    //std::array<float, 9> ccm ; 
 	                auto nums = split_string(match_str, " ");
 	                int j = 0;
 	                for (auto itr2 = nums.begin(); itr2 != nums.end(); itr2++) {
 	                    string match_value = *itr2;
 	                    float value = stof(match_value);
-	                    (*colorMatrix)[j++] = value;
+	                    s.CCM_ccm[key].at(j++) = value;
 	                    //cout << "colorMatrix "<< j << "  = " << value << endl;
 	                }
 	            } else {
 	                LOGE << "NO MATCH CCM in: " << line;
 	            }
-	
-	
-	
-	            return;
 	       }
 	
 	    }
 
-        LOGE << "no match for gain expo for key  = " << lens_gain_expo;
-	    // no match!
-	
+	    return;
 	}
+	
+	
+	void getCCM( float (*colorMatrix)[9], float (*asShotNeutral)[3], float *blacklevel, long *whitelevel) {
+	
+
+	    // eg string lens_gain_expo = "_L69262_G100E0500";
+	    string lens_gain_expo = getLensGainExpo();
+
+
+	    auto it_bl = s.CCM_bl.find(lens_gain_expo);
+        if (it_bl != s.CCM_bl.end()) {
+            *blacklevel = it_bl->second;
+	    } else {
+            LOGW << "NO MATCH BL for lens_gain_expo:  " << lens_gain_expo;
+        }
+	
+	    auto it_wl = s.CCM_wl.find(lens_gain_expo);
+        if (it_wl != s.CCM_wl.end()) {
+            *whitelevel = it_wl->second;
+	    } else {
+            LOGW << "NO MATCH WL for lens_gain_expo:  " << lens_gain_expo;
+        }
+
+	    auto it_asn = s.CCM_asn.find(lens_gain_expo);
+        if (it_asn != s.CCM_asn.end()) {
+            for(int i=0;i<3;i++) {
+                float value = it_asn->second.at(i);
+                (*asShotNeutral)[i] = value;
+            }
+	    } else {
+            LOGW << "NO MATCH asn for lens_gain_expo:  " << lens_gain_expo;
+        }
+
+	    auto it_ccm = s.CCM_ccm.find(lens_gain_expo);
+        if (it_ccm != s.CCM_ccm.end()) {
+            for(int i=0;i<9;i++) {
+                float value = it_ccm->second.at(i);
+                (*colorMatrix)[i] = value;
+            }
+	    } else {
+            LOGW << "NO MATCH ccm for lens_gain_expo:  " << lens_gain_expo;
+        }
+	}
+
+	
 	
 	
     int writeDng(string dngname, bool wb_and_cc = false) {
  
-   enum illuminant {
-       ILLUMINANT_UNKNOWN = 0,
-       ILLUMINANT_DAYLIGHT,
-       ILLUMINANT_FLUORESCENT,
-       ILLUMINANT_TUNGSTEN,
-       ILLUMINANT_FLASH,
-       ILLUMINANT_FINE_WEATHER = 9,
-       ILLUMINANT_CLOUDY_WEATHER,
-       ILLUMINANT_SHADE,
-       ILLUMINANT_DAYLIGHT_FLUORESCENT,
-       ILLUMINANT_DAY_WHITE_FLUORESCENT,
-       ILLUMINANT_COOL_WHITE_FLUORESCENT,
-       ILLUMINANT_WHITE_FLUORESCENT,
-       ILLUMINANT_STANDARD_A = 17,
-       ILLUMINANT_STANDARD_B,
-       ILLUMINANT_STANDARD_C,
-       ILLUMINANT_D55,
-       ILLUMINANT_D65,
-       ILLUMINANT_D75,
-       ILLUMINANT_D50,
-       ILLUMINANT_ISO_TUNGSTEN,
-   };
+       enum illuminant {
+           ILLUMINANT_UNKNOWN = 0,
+           ILLUMINANT_DAYLIGHT,
+           ILLUMINANT_FLUORESCENT,
+           ILLUMINANT_TUNGSTEN,
+           ILLUMINANT_FLASH,
+           ILLUMINANT_FINE_WEATHER = 9,
+           ILLUMINANT_CLOUDY_WEATHER,
+           ILLUMINANT_SHADE,
+           ILLUMINANT_DAYLIGHT_FLUORESCENT,
+           ILLUMINANT_DAY_WHITE_FLUORESCENT,
+           ILLUMINANT_COOL_WHITE_FLUORESCENT,
+           ILLUMINANT_WHITE_FLUORESCENT,
+           ILLUMINANT_STANDARD_A = 17,
+           ILLUMINANT_STANDARD_B,
+           ILLUMINANT_STANDARD_C,
+           ILLUMINANT_D55,
+           ILLUMINANT_D65,
+           ILLUMINANT_D75,
+           ILLUMINANT_D50,
+           ILLUMINANT_ISO_TUNGSTEN,
+       };
 
-   enum tiff_cfa_color {
-       CFA_RED = 0,
-       CFA_GREEN = 1,
-       CFA_BLUE = 2,
-   };
+       enum tiff_cfa_color {
+           CFA_RED = 0,
+           CFA_GREEN = 1,
+           CFA_BLUE = 2,
+       };
 
-   enum cfa_pattern {
-       CFA_BGGR = 0,
-       CFA_GBRG,
-       CFA_GRBG,
-       CFA_RGGB,
-       CFA_NUM_PATTERNS,
-   };
+       enum cfa_pattern {
+           CFA_BGGR = 0,
+           CFA_GBRG,
+           CFA_GRBG,
+           CFA_RGGB,
+           CFA_NUM_PATTERNS,
+       };
 
-   static const char cfa_patterns[4][CFA_NUM_PATTERNS] = {                                                                                       
-       [CFA_BGGR] = {CFA_BLUE, CFA_GREEN, CFA_GREEN, CFA_RED},
-       [CFA_GBRG] = {CFA_GREEN, CFA_BLUE, CFA_RED, CFA_GREEN},
-       [CFA_GRBG] = {CFA_GREEN, CFA_RED, CFA_BLUE, CFA_GREEN},
-       [CFA_RGGB] = {CFA_RED, CFA_GREEN, CFA_GREEN, CFA_BLUE},
-   };
+       static const char cfa_patterns[4][CFA_NUM_PATTERNS] = {                                                                                       
+           [CFA_BGGR] = {CFA_BLUE, CFA_GREEN, CFA_GREEN, CFA_RED},
+           [CFA_GBRG] = {CFA_GREEN, CFA_BLUE, CFA_RED, CFA_GREEN},
+           [CFA_GRBG] = {CFA_GREEN, CFA_RED, CFA_BLUE, CFA_GREEN},
+           [CFA_RGGB] = {CFA_RED, CFA_GREEN, CFA_GREEN, CFA_BLUE},
+       };
 
-   unsigned int pattern = CFA_RGGB;                                                                                                          
-   static const short bayerPatternDimensions[] = { 2, 2 };
-
-
-   /* Default ColorMatrix1, when none provided */
-   static const float default_color_matrix1[] = {
-        2.005, -0.771, -0.269,
-       -0.752,  1.688,  0.064,
-       -0.149,  0.283,  0.745
-   };
+       unsigned int pattern = CFA_RGGB;                                                                                                          
+       static const short bayerPatternDimensions[] = { 2, 2 };
 
 
-   float blacklevel = 0;
-   long  whitelevel = 65535;
-   float asShotNeutral[] = {1,1,1};
-   float colorMatrix[]   = {1,1,1, 1,1,1, 1,1,1};
-
-   define_ccm( &colorMatrix, &asShotNeutral, &blacklevel, &whitelevel);
-
-   LOGV << "lens = " << lens  << " gain = " << gain << " expo = " << expo ;
-   LOGV << "blacklevel, whitelevel = " << blacklevel << " , " << whitelevel;
+       /* Default ColorMatrix1, when none provided */
+       static const float default_color_matrix1[] = {
+            2.005, -0.771, -0.269,
+           -0.752,  1.688,  0.064,
+           -0.149,  0.283,  0.745
+       };
 
 
-    // create Mat object from raw data
-    Mat mat_crop(height, width, CV_16U, data, bytesperline);
-    printMatStats("mat_crop", mat_crop);
+       float blacklevel = 0;
+       long  whitelevel = 65535;
+       float asShotNeutral[] = {1,1,1};
+       float colorMatrix[]   = {1,1,1, 1,1,1, 1,1,1};
 
-    // encode to tiff
-    vector<int> params;
-    params.push_back(IMWRITE_TIFF_COMPRESSION);
-    params.push_back(COMPRESSION_NONE);
-    vector<uchar> buffer;
-    cv::imencode(".tiff", mat_crop, buffer, params);
+       getCCM ( &colorMatrix, &asShotNeutral, &blacklevel, &whitelevel);
 
-    // load into 
-     istringstream in (std::string(buffer.begin(), buffer.end()));
-     TIFF* intif = TIFFStreamOpen("MemTIFF", &in);
-     //TIFF* intif = TIFFOpen("temp.tif", "r");
-     LOGV << "created MemTIFF from data len=" << buffer.size();
-
-    string imageinfo = attributes_to_json(-1);
-
-    TIFF* tif = TIFFOpen (dngname.c_str(), "w");
+       LOGV << "lens = " << lens  << " gain = " << gain << " expo = " << expo ;
+       LOGV << "blacklevel, whitelevel = " << blacklevel << " , " << whitelevel;
 
 
-    TIFFSetField(tif, TIFFTAG_COMPRESSION, COMPRESSION_NONE);
-    TIFFSetField(tif, TIFFTAG_DNGVERSION, "\001\004\0\0");
-    TIFFSetField(tif, TIFFTAG_DNGBACKWARDVERSION, "\001\004\0\0");
+        // create Mat object from raw data
+        Mat mat_crop(height, width, CV_16U, data, bytesperline);
+        printMatStats("mat_crop", mat_crop);
+
+        // encode to tiff
+        vector<int> params;
+        params.push_back(IMWRITE_TIFF_COMPRESSION);
+        params.push_back(COMPRESSION_NONE);
+        vector<uchar> buffer;
+        cv::imencode(".tiff", mat_crop, buffer, params);
+
+        // load into 
+         istringstream in (std::string(buffer.begin(), buffer.end()));
+         TIFF* intif = TIFFStreamOpen("MemTIFF", &in);
+         //TIFF* intif = TIFFOpen("temp.tif", "r");
+         LOGV << "created MemTIFF from data len=" << buffer.size();
+
+        string imageinfo = attributes_to_json(-1);
+
+        TIFF* tif = TIFFOpen (dngname.c_str(), "w");
 
 
-    TIFFSetField (tif, TIFFTAG_SUBFILETYPE, 0);
-    TIFFSetField (tif, TIFFTAG_IMAGEWIDTH, width);
-    TIFFSetField (tif, TIFFTAG_IMAGELENGTH, height);
-    TIFFSetField (tif, TIFFTAG_BITSPERSAMPLE, 16);
-    TIFFSetField (tif, TIFFTAG_ROWSPERSTRIP, 1);
-    TIFFSetField (tif, TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT);
-    TIFFSetField (tif, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_CFA);
-    TIFFSetField (tif, TIFFTAG_SAMPLESPERPIXEL, 1);
-    TIFFSetField (tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
-    TIFFSetField (tif, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT);
-    TIFFSetField (tif, TIFFTAG_CFAREPEATPATTERNDIM, bayerPatternDimensions);
-    TIFFSetField (tif, TIFFTAG_CFAPATTERN, cfa_patterns[pattern]);
-    // needs to have the "4" depending on definition in ./libtiff/tif_dirinfo.c
-    //TIFFSetField(tif, TIFFTAG_CFAPATTERN, 4, cfa_patterns[pattern]);
-    //
+        TIFFSetField(tif, TIFFTAG_COMPRESSION, COMPRESSION_NONE);
+        TIFFSetField(tif, TIFFTAG_DNGVERSION, "\001\004\0\0");
+        TIFFSetField(tif, TIFFTAG_DNGBACKWARDVERSION, "\001\004\0\0");
 
-   //TIFFSetField (tif, TIFFTAG_CFAPATTERN, "\00\01\01\02");
-   //TIFFSetField(tif, TIFFTAG_CFAREPEATPATTERNDIM, "\02\02");
 
-    TIFFSetField (tif, TIFFTAG_MAKE, "__SNAPPY__");
-    TIFFSetField (tif, TIFFTAG_MODEL, "__WEED__");
-    TIFFSetField (tif, TIFFTAG_UNIQUECAMERAMODEL, imageinfo.c_str());
-    TIFFSetField (tif, TIFFTAG_COLORMATRIX1, 9, colorMatrix);
-    TIFFSetField (tif, TIFFTAG_COLORMATRIX2, 9, colorMatrix);
-    TIFFSetField (tif, TIFFTAG_ASSHOTNEUTRAL, 3, asShotNeutral);
-    TIFFSetField (tif, TIFFTAG_CFALAYOUT, 1);
-    TIFFSetField (tif, TIFFTAG_CFAPLANECOLOR, 3, "\00\01\02");
+        TIFFSetField (tif, TIFFTAG_SUBFILETYPE, 0);
+        TIFFSetField (tif, TIFFTAG_IMAGEWIDTH, width);
+        TIFFSetField (tif, TIFFTAG_IMAGELENGTH, height);
+        TIFFSetField (tif, TIFFTAG_BITSPERSAMPLE, 16);
+        TIFFSetField (tif, TIFFTAG_ROWSPERSTRIP, 1);
+        TIFFSetField (tif, TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT);
+        TIFFSetField (tif, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_CFA);
+        TIFFSetField (tif, TIFFTAG_SAMPLESPERPIXEL, 1);
+        TIFFSetField (tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+        TIFFSetField (tif, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT);
+        TIFFSetField (tif, TIFFTAG_CFAREPEATPATTERNDIM, bayerPatternDimensions);
+        TIFFSetField (tif, TIFFTAG_CFAPATTERN, cfa_patterns[pattern]);
+        // needs to have the "4" depending on definition in ./libtiff/tif_dirinfo.c
+        //TIFFSetField(tif, TIFFTAG_CFAPATTERN, 4, cfa_patterns[pattern]);
+        //
 
-    TIFFSetField (tif, TIFFTAG_BLACKLEVEL, 1, &blacklevel);
-    TIFFSetField (tif, TIFFTAG_WHITELEVEL, 1, &whitelevel);
+       //TIFFSetField (tif, TIFFTAG_CFAPATTERN, "\00\01\01\02");
+       //TIFFSetField(tif, TIFFTAG_CFAREPEATPATTERNDIM, "\02\02");
 
-    // store image
-    uint32* scan_line = (uint32 *)malloc(width*(sizeof(uint32)));
-    for (int i = 0; i < height; i++) {
-         TIFFReadScanline(intif, scan_line, i);
-         TIFFWriteScanline(tif, scan_line, i, 0);
-    }
+        TIFFSetField (tif, TIFFTAG_MAKE, "__SNAPPY__");
+        TIFFSetField (tif, TIFFTAG_MODEL, "__WEED__");
+        TIFFSetField (tif, TIFFTAG_UNIQUECAMERAMODEL, imageinfo.c_str());
+        TIFFSetField (tif, TIFFTAG_COLORMATRIX1, 9, colorMatrix);
+        TIFFSetField (tif, TIFFTAG_COLORMATRIX2, 9, colorMatrix);
+        TIFFSetField (tif, TIFFTAG_ASSHOTNEUTRAL, 3, asShotNeutral);
+        TIFFSetField (tif, TIFFTAG_CFALAYOUT, 1);
+        TIFFSetField (tif, TIFFTAG_CFAPLANECOLOR, 3, "\00\01\02");
 
-     LOGV << "TIFFNumberOfStrips: " <<  TIFFNumberOfStrips(intif) << " -> " <<  TIFFNumberOfStrips(tif);
-     LOGV << "TIFFNumberOfTiles:  " <<  TIFFNumberOfTiles(intif) << " -> " <<  TIFFNumberOfTiles(tif);
+        TIFFSetField (tif, TIFFTAG_BLACKLEVEL, 1, &blacklevel);
+        TIFFSetField (tif, TIFFTAG_WHITELEVEL, 1, &whitelevel);
 
-    TIFFClose (intif);
-    TIFFClose (tif);
+        // store image
+        uint32* scan_line = (uint32 *)malloc(width*(sizeof(uint32)));
+        for (int i = 0; i < height; i++) {
+             TIFFReadScanline(intif, scan_line, i);
+             TIFFWriteScanline(tif, scan_line, i, 0);
+        }
 
-    return 0;
+         LOGV << "TIFFNumberOfStrips: " <<  TIFFNumberOfStrips(intif) << " -> " <<  TIFFNumberOfStrips(tif);
+         LOGV << "TIFFNumberOfTiles:  " <<  TIFFNumberOfTiles(intif) << " -> " <<  TIFFNumberOfTiles(tif);
+
+        TIFFClose (intif);
+        TIFFClose (tif);
+
+        return 0;
 
     }
 
@@ -1014,7 +1060,7 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         fhead.close();
 
         // should be something like 5310...
-        s.dng_attribute_start = findStartOfSetting(s.dng_headerdata, s.dng_headerlength);
+        //s.dng_attribute_start = findStartOfSetting(s.dng_headerdata, s.dng_headerlength);
 
         // init exiftool interface
         s.exiftool = new ExifTool();
@@ -1024,6 +1070,8 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         MagickCoreGenesis(NULL,MagickFalse);
 
         s.job_queue = async(launch::async, []{ });
+
+        defineCCM();
 
      } 
 
@@ -1474,5 +1522,6 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 
 
 struct Imagedata::Setup Imagedata::s;
+
 
 

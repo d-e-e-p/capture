@@ -475,13 +475,18 @@ int process_raw2dng(fs::path src, fs::path dst) {
     fs::path jsn_run = getJsonFromRun(src);
     //LOGI << "jsn_imag = " << jsn_img.string();
     //LOGI << "jsn_run = " << jsn_run.string();
-
-    if (fs::exists(jsn_img)) {
-        img.readJson(jsn_img);
-    } else {
+    
+    if (! fs::exists(jsn_img)) {
         LOGW << "skipping image--json file does not exist: " << jsn_img.string();
         return 0;
     }
+
+    if (fs::is_empty(jsn_img)) {
+        LOGW << "skipping image--json file is empty: " << jsn_img.string();
+        return 0;
+    }
+
+    img.readJson(jsn_img);
 
     if (fs::exists(jsn_run)) {
         img.readJson(jsn_run);
@@ -503,6 +508,7 @@ int process_raw2dng(fs::path src, fs::path dst) {
     }
     */
     img.writeDng(dst, opt.wb_and_cc);
+    LOGV << "dng write complete to " << dst.string();
 
 }
 
