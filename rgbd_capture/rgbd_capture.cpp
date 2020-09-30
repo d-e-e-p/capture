@@ -140,10 +140,15 @@ rs2_distortion model = i.model;
 
         cout << "begin config\n";
         //Add desired streams to configuration
+/*
         cfg.enable_stream(RS2_STREAM_COLOR,      1280,  720, RS2_FORMAT_BGR8, 15);
         cfg.enable_stream(RS2_STREAM_DEPTH,      1280,  720, RS2_FORMAT_Z16,  15);
         cfg.enable_stream(RS2_STREAM_INFRARED,   1280,  720, RS2_FORMAT_BGR8, 15);
 
+*/
+        cfg.enable_stream(RS2_STREAM_COLOR,      1280,  720, RS2_FORMAT_BGR8, 6);
+        cfg.enable_stream(RS2_STREAM_DEPTH,      1280,  720, RS2_FORMAT_Z16,  6);
+        cfg.enable_stream(RS2_STREAM_INFRARED,   1280,  720, RS2_FORMAT_BGR8, 6);
         cout << "end config\n";
 
         //Instruct pipeline to start streaming with the requested configuration

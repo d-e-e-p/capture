@@ -96,6 +96,7 @@ extern unsigned int     n_buffers;
 extern int              out_buf;
 extern int              force_format;
 extern int              frame_count;
+extern bool             stop_run;
 
 
 extern  void errno_exit(const char *s);

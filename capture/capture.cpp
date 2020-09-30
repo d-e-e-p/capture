@@ -14,15 +14,17 @@
 
 // global vars -- but in a struct so that makes it ok :-)
 struct Options {
-    int  minutes = 0;
-    int  frames = 1000;
-    string resolution = "med";
-    int  gain = 0;
-    int  expo = 500; // max = 8256
-    int  fps = 0;
+    int    minutes = 0;
+    int    frames = 1000;
+    string resolution = "high";
+    int    gain = 0;
+    int    expo = 500; // max = 8256
+    string lens = "L69262";
+    int    fps = 0;
 
     // -1 value for min/max sweep => use sensor min/max
     bool vary_gain = false;
+    bool auto_gain = true;
     int  min_gain = -1;
     int  max_gain = -1;
     int  step_gain = 10;
@@ -141,6 +143,7 @@ void exifPrint(const Exiv2::ExifData exifData) ;
 void processArgs(int argc, char** argv) ;
 string getDateTimeOriginal() ;
 string getDateStamp() ;
+string getDateStampSec() ;
 string getCurrentControlValue(IControl *control) ;
 void setMinMaxGain (ICamera *camera) ;
 void setMinMaxExposure (ICamera *camera) ;
@@ -148,8 +151,9 @@ void setGain (int value) ;
 void setExposure (int value) ;
 void setResolution (string resolution) ;
 void takeDummyPicsToMakeSettingsStick(void) ;
-void varyGain (void) ;
-void varyExposure (void) ;
+int getAutoGainValue(int) ;
+int varyGain (void) ;
+int varyExposure (void) ;
 int varyBoth (void) ;
 void saveRaw(Imagedata* image) ;
 void saveDng(Imagedata* image) ;
@@ -181,8 +185,7 @@ int main(int argc, char **argv) {
     processArgs(argc, argv);
     setupCapture();
 
-        frame_count = opt.frames;
-        mainloop();
+      mainloop();
 
     stopCapture();
     return 0;
@@ -278,6 +281,15 @@ void setupDirs() {
     // filename stuff...
     g.datestamp  = getDateStamp();
     fp.folder_base = fp.folder_data / g.datestamp;
+    if (fs::exists(fp.folder_base)) {
+        LOGI << "dir already exists: " << fp.file_log.string();
+        g.datestamp  = getDateStampSec();
+        fp.folder_base = fp.folder_data / g.datestamp;
+        if (fs::exists(fp.folder_base)) {
+            LOGE << "dir already exists--overwriting: " << fp.file_log.string();
+        }
+    }
+
     fs::create_directories(fp.folder_base);
 
     fp.file_log = fp.folder_base / "run.log";
@@ -378,8 +390,8 @@ void defineColorCorrectionMatrix() {
 void setupCamera(void) {
 
     // set default gain and exposure
-    setGain(opt.gain);
     setExposure(opt.expo);
+    setGain(opt.gain);
     set_fps(200);
 
     fs::path file_camera_settings = fp.folder_base / "camera.settings";
@@ -394,7 +406,7 @@ void setupCamera(void) {
         resizeWindow(g.mainWindowName, g.imagewidth, g.imageheight);
         createButton("save image",buttonCallback,NULL,QT_PUSH_BUTTON,1);
         //int cvCreateTrackbar(const char* trackbar_name, const char* window_name, int* value, int count, CvTrackbarCallback on_change=NULL )¶
-        createTrackbar( "gain", g.mainWindowName, &opt.gain, 300,   tbCallbackGain);
+        createTrackbar( "gain", g.mainWindowName, &opt.gain, 480,   tbCallbackGain);
         createTrackbar( "expo", g.mainWindowName, &opt.expo, 3000,  tbCallbackExpo);
     }
 
@@ -746,14 +758,10 @@ void startLoopCallback( void ) {
     // was gain or exposure externally changed?
     syncGainExpo();
 
-    if (opt.vary_both) {
-        lp.sweep_index = varyBoth();
-    } else {
-        if (opt.vary_gain)
-            varyGain();
-        if (opt.vary_expo)
-            varyExposure();
-    }
+         if (opt.vary_both) lp.sweep_index = varyBoth();
+    else if (opt.vary_expo) lp.sweep_index = varyExposure();
+    else if (opt.vary_gain) lp.sweep_index = varyGain();
+    
     return;
 }
 
@@ -802,9 +810,12 @@ int endLoopCallback( void *ptr, int datalength, struct v4l2_buffer buf, struct v
 
    char buff[BUFSIZ];
    if (opt.vary_both or opt.vary_gain or opt.vary_expo) {
-       snprintf(buff, sizeof(buff), "img%0*d_G%03dE%04d",lp.maxIntegerWidth, lp.num_frames++, opt.gain, opt.expo);
+        snprintf(buff, sizeof(buff), "img%0*d_E%04d_G%03d",lp.maxIntegerWidth, lp.num_frames, opt.expo, opt.gain);
+        if (lp.sweep_index == lp.sweep_total)
+            lp.num_frames++;
    } else {
-       snprintf(buff, sizeof(buff), "img%0*d", lp.maxIntegerWidth, lp.num_frames++);
+        snprintf(buff, sizeof(buff), "img%0*d", lp.maxIntegerWidth, lp.num_frames);
+        lp.num_frames++;
    }
    string basename = buff;
 
@@ -817,6 +828,7 @@ int endLoopCallback( void *ptr, int datalength, struct v4l2_buffer buf, struct v
     image->steady_clock_ns=timestamp_this;
     image->gain=opt.gain;
     image->expo=opt.expo;
+    image->lens=opt.lens;
     image->sweep_index=lp.sweep_index;
     image->sweep_total=lp.sweep_total;
     image->fps=lp.fps;
@@ -859,13 +871,18 @@ int endLoopCallback( void *ptr, int datalength, struct v4l2_buffer buf, struct v
    lp.syst_time_this = chrono::system_clock::now();
    if (opt.minutes > 0) {
        chrono::duration<double, milli> elapsed_time = lp.syst_time_this - lp.syst_time_prog;
-       int duration_min = round(chrono::duration_cast<chrono::minutes> 
-               (elapsed_time).count());
-       if (duration_min > opt.minutes) {
-           // exit
-           //frame_count = lp.num_frames;
+       int duration_min = chrono::duration_cast<chrono::minutes> (elapsed_time).count();
+       LOGI << "duration_min = " << duration_min;
+       if (duration_min == opt.minutes) {
+            LOGV << "stopping because duration_min = " << duration_min;
+            stop_run = true;
        }
-   }
+   // stop if num_frames saved is enough
+   } else if ( lp.num_frames > opt.frames ) {
+        LOGV << "stopping because lp.num_frames = " << lp.num_frames;
+        stop_run = true;
+    }
+
 
    // ratelimit if opt.fps is set
    //
@@ -884,7 +901,11 @@ int endLoopCallback( void *ptr, int datalength, struct v4l2_buffer buf, struct v
 
 void endLoop(void) {
     // cleanup
-    LOGI << "Saved " << lp.num_frames << " frames at " << fixed << setprecision(0) << lp.fps << " fps" ;
+    if (opt.vary_both or opt.vary_gain or opt.vary_expo) {
+        LOGI << "Saved " << lp.num_frames  << " * " << lp.sweep_total << " frames of sweep with " << fixed << setprecision(0) << lp.fps << " fps" ;
+    } else {
+        LOGI << "Saved " << lp.num_frames  << " frames at " << fixed << setprecision(0) << lp.fps << " fps" ;
+    }
     LOGI << "     raw dir: " << fp.folder_raw.string() ;
     LOGI << "session log : " << fp.file_log.string() << endl;
 }
@@ -959,18 +980,71 @@ void saveJpgOld(Imagedata* image) {
 
 }
 
-void generateGainExposureTable() {
+void generateExposureTable() {
 
-    for (int value_gain = opt.min_gain; value_gain < opt.max_gain; value_gain += opt.step_gain) {
-        for (int value_expo = opt.min_expo; value_expo < opt.max_expo; value_expo += opt.step_expo) {
-            g.gaex_table.push_back(cv::Point(value_gain, value_expo ));
-            LOGV << " Vary table " << lp.sweep_total++ << ": (gain,expo) = " << cv::Point(value_gain, value_expo) ;
+    for (int value_expo = opt.min_expo; value_expo <= opt.max_expo; value_expo += opt.step_expo) {
+        // set gain value either auto or hardcoded
+        int value_gain = opt.auto_gain?  getAutoGainValue(value_expo) : opt.gain;
+        g.gaex_table.push_back(cv::Point(value_gain, value_expo ));
+        LOGV << " Vary table " << lp.sweep_total++ << ": (expo,gain) = " << cv::Point(value_expo, value_gain) ;
+    }
+
+    LOGI << "Generated gain+exposure table ";
+    LOGI << "    exposure range = " << cv::Point(opt.min_expo, opt.max_expo) << " in steps of " << opt.step_expo ;
+    LOGI << "    total values in sweep  =  " << g.gaex_table.size() ;
+    lp.sweep_total = g.gaex_table.size();
+
+    // record the number somewhere...
+
+    if (false) {
+        for (auto it : g.gaex_table) {
+            LOGV << it ;
         }
+    }
+
+
+}
+
+void generateGainTable() {
+
+    for (int value_gain = opt.min_gain; value_gain <= opt.max_gain; value_gain += opt.step_gain) {
+        int value_expo = opt.expo;
+        g.gaex_table.push_back(cv::Point(value_gain, value_expo ));
+        LOGV << " Vary table " << lp.sweep_total++ << ": (expo,gain) = " << cv::Point(value_expo, value_gain) ;
     }
 
     LOGI << "Generated gain+exposure table ";
     LOGI << "    gain range =     " << cv::Point(opt.min_gain, opt.max_gain) << " in steps of " << opt.step_gain ;
+    LOGI << "    total values in sweep  =  " << g.gaex_table.size() ;
+    lp.sweep_total = g.gaex_table.size();
+
+    // record the number somewhere...
+
+    if (false) {
+        for (auto it : g.gaex_table) {
+            LOGV << it ;
+        }
+    }
+
+
+}
+
+
+
+
+
+void generateGainExposureTable() {
+
+    for (int value_expo = opt.min_expo; value_expo <= opt.max_expo; value_expo += opt.step_expo) {
+        for (int value_gain = opt.min_gain; value_gain <= opt.max_gain; value_gain += opt.step_gain) {
+            g.gaex_table.push_back(cv::Point(value_gain, value_expo ));
+            LOGV << " Vary table " << lp.sweep_total++ << ": (expo,gain) = " << cv::Point(value_expo, value_gain) ;
+        }
+    }
+
+    LOGI << "Generated gain+exposure table ";
     LOGI << "    exposure range = " << cv::Point(opt.min_expo, opt.max_expo) << " in steps of " << opt.step_expo ;
+    LOGI << "    gain range =     " << cv::Point(opt.min_gain, opt.max_gain) << " in steps of " << opt.step_gain ;
     LOGI << "    total values in sweep  =  " << g.gaex_table.size() ;
     lp.sweep_total = g.gaex_table.size();
 
@@ -1033,6 +1107,7 @@ void processArgs(int argc, char** argv) {
         OptResolution,
         OptGain,
         OptExposure,
+        OptLens,
         OptFps,
         OptVaryGain,
         OptMinGain,
@@ -1056,7 +1131,8 @@ void processArgs(int argc, char** argv) {
         {"frames",        required_argument,  0,    OptFrames },
         {"resolution",    required_argument,  0,    OptResolution },
         {"gain",          required_argument,  0,    OptGain },
-        {"exposure",      required_argument,  0,    OptExposure },
+        {"expo",          required_argument,  0,    OptExposure },
+        {"lens",          required_argument,  0,    OptLens },
         {"fps",           required_argument,  0,    OptFps },
         {"vary_gain",     no_argument,        0,    OptVaryGain },
         {"min_gain",      required_argument,  0,    OptMinGain },
@@ -1110,12 +1186,22 @@ void processArgs(int argc, char** argv) {
             LOGI << "Option: Resolution set to: " << opt.resolution ;
             break;
         case OptGain:
-            opt.gain = stoi(optarg);
-            LOGI << "Option: Gain set to: " << opt.gain ;
+            if (string(optarg) == "auto") {
+                opt.auto_gain = true; 
+                LOGI << "Option: Gain set to: auto" ;
+            } else {
+                opt.gain = stoi(optarg);
+                opt.auto_gain = false; 
+                LOGI << "Option: Gain set to: " << opt.gain ;
+            }
             break;
         case OptExposure:
             opt.expo = stoi(optarg);
             LOGI << "Option: Exposure set to: " << opt.expo ;
+            break;
+        case OptLens:
+            opt.lens = string(optarg);
+            LOGI << "Option: Lens set to: " << opt.lens ;
             break;
         case OptFps:
             opt.fps = stoi(optarg);
@@ -1123,6 +1209,7 @@ void processArgs(int argc, char** argv) {
             break;
         case OptVaryGain:
             opt.vary_gain = true;
+            opt.auto_gain = false;
             LOGI << "Option: sweep gain from min to max" ;
             break;
         case OptMinGain:
@@ -1239,6 +1326,34 @@ string getDateStamp() {
 
 }
 
+string getDateStampSec() {
+    time_t rawtime;
+    struct tm * timeinfo;
+
+    time ( &rawtime );
+    timeinfo = localtime ( &rawtime );
+    printf ("Time %s", asctime(timeinfo));
+
+    int year    = timeinfo->tm_year+1900;
+    int month   = timeinfo->tm_mon+1;
+    int day     = timeinfo->tm_mday;
+    int hour    = timeinfo->tm_hour;
+    int minute  = timeinfo->tm_min;
+    int seconds = timeinfo->tm_sec;
+
+    stringstream iss;
+    iss << setfill('0');
+    iss << setw(4) << year;
+    iss << setw(2) << month;
+    iss << setw(2) << day;
+    iss << setw(2) << hour;
+    iss << setw(2) << minute;
+    iss << setw(2) << seconds;
+
+    return iss.str(); //return the string present in iss.
+
+}
+
 
 
 // control values can either be an integer value or list of values
@@ -1300,8 +1415,32 @@ void syncGainExpo(void) {
 
 }
 
+// gain based on lens + expo
+int getAutoGainValue(int value_expo) {
+
+    float value;
+
+    if (opt.lens == "L69262") {
+        value = 267.4 * exp(-(float) value_expo / 500.0);
+        // round to closest 10
+        value = 10 * round(value / 10.0);
+
+    } else {
+        LOGE << "auto gain formula not defined for lens " << opt.lens;
+    }
+
+    return round(value);
+
+}
+
+
 // modulo gain if asked value greater than max !
 void setGain (int value) {
+
+    if (opt.auto_gain) {
+        value = getAutoGainValue(opt.expo);
+    }
+
     LOGV << " setting gain to: " << value ;
 
     struct v4l2_query_ext_ctrl qctrl = query_gain();
@@ -1461,24 +1600,55 @@ void takeDummyPicsToMakeSettingsStick() {
     lp.num_of_dummy_pics = 10;
 }
 
-void varyGain () {
-    opt.gain += opt.step_gain;
-    if (opt.gain > opt.max_gain) {
-        opt.gain = opt.min_gain;
+// TODO: collapse three vary statements with helper
+
+int varyGain () {
+    // table empty? make.
+    if (g.gaex_table.empty()) {
+        generateGainTable();
+        g.gaex_table_ptr = g.gaex_table.begin();
     }
+    cv::Point pt = *g.gaex_table_ptr;
+    opt.gain = pt.x;
+    opt.expo = pt.y;
+
+    setExposure(opt.expo);
     setGain(opt.gain);
     takeDummyPicsToMakeSettingsStick();
 
+    // circulate pointer
+    if ( g.gaex_table_ptr == g.gaex_table.end() ) {
+        g.gaex_table_ptr = g.gaex_table.begin();
+    } else {
+        g.gaex_table_ptr++;
+    }
+
+    return distance(g.gaex_table.begin(),g.gaex_table_ptr);
+
 }
 
-void varyExposure () {
-    opt.expo += opt.step_expo;
-    if (opt.expo > opt.max_expo) {
-        opt.expo = opt.min_expo;
+int varyExposure () {
+    // table empty? make.
+    if (g.gaex_table.empty()) {
+        generateExposureTable();
+        g.gaex_table_ptr = g.gaex_table.begin();
     }
+    cv::Point pt = *g.gaex_table_ptr;
+    opt.gain = pt.x;
+    opt.expo = pt.y;
+
     setExposure(opt.expo);
+    setGain(opt.gain);
     takeDummyPicsToMakeSettingsStick();
 
+    // circulate pointer
+    if ( g.gaex_table_ptr == g.gaex_table.end() ) {
+        g.gaex_table_ptr = g.gaex_table.begin();
+    } else {
+        g.gaex_table_ptr++;
+    }
+
+    return distance(g.gaex_table.begin(),g.gaex_table_ptr);
 }
 
 // return index number of current iteration
@@ -1493,8 +1663,8 @@ int varyBoth (void) {
     opt.gain = pt.x;
     opt.expo = pt.y;
 
-    setGain(opt.gain);
     setExposure(opt.expo);
+    setGain(opt.gain);
     takeDummyPicsToMakeSettingsStick();
 
     // circulate pointer

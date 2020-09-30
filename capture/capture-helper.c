@@ -53,6 +53,7 @@ unsigned int     n_buffers;
 int		out_buf;
 int              force_format;
 int              frame_count = 70;
+bool             stop_run = false;
 
 // WARNING: making this global assumes all connected cameras have same setting!
 struct v4l2_format fmt;	
@@ -190,12 +191,11 @@ static int read_frame(void)
 
 void mainloop(void)
 {
-	unsigned int count;
+	//unsigned int count;
+	//count = frame_count;
+    //LOGV << "count = " << count;
 
-	count = frame_count;
-    LOGV << "count = " << count;
-
-	while (count-- > 0) {
+	while (! stop_run) {
 		for (;;) {
 			fd_set fds;
 			struct timeval tv;
@@ -220,7 +220,7 @@ void mainloop(void)
 				fprintf(stderr, "select timeout\n");
 				exit(EXIT_FAILURE);
 			}
-            LOGV << "ready to read_frame() count = " << count;
+            //LOGV << "ready to read_frame() ";
 
 			if (read_frame())
 				break;
