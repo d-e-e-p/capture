@@ -102,3 +102,10 @@ using namespace cv;
 // for window size
 #include <sys/ioctl.h>
 #include <unistd.h>
+
+// for file type
+#include <boost/filesystem.hpp>
+#include <boost/range.hpp>
+#include <iostream>
+#include <magic.h>
+

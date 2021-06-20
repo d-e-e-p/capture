@@ -13,7 +13,7 @@
 CC=g++
 WARNING_FLAGS=-Wall -Wextra -pedantic
 OPENCV_FLAGS=-I/usr/local/include/opencv4 -I/usr/local/include -L/usr/local/lib -lopencv_core -lopencv_highgui -lopencv_imgproc -lopencv_imgcodecs
-CFLAGS= -I../common  -I../libsv/include -I../libsv/examples  -std=c++11 -lpthread -pthread -Wl,-rpath=/usr/local/lib -L/usr/local/lib -lexiv2 -lstdc++fs -lboost_system -lboost_filesystem -lboost_program_options 
+CFLAGS= -I../common  -I../libsv/include -I../libsv/examples  -std=c++11 -lpthread -pthread -Wl,-rpath=/usr/local/lib -L/usr/local/lib -lexiv2 -lstdc++fs -lboost_system -lboost_filesystem -lboost_program_options -lmagic
 MAGICK_FLAGS=-fopenmp -Wno-write-strings -I/usr/local/include/ImageMagick-7 -L/usr/local/lib -lMagick++-7.Q16HDRI -lMagickWand-7.Q16HDRI -lMagickCore-7.Q16HDRI
 TIFF_FLAGS=-ltiff -ltiffxx
 CSOURCES= ../libsv/examples/common_cpp/image_processor.cpp

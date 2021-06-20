@@ -405,8 +405,18 @@ fs::path getJsonFromRun (fs::path src) {
 
 }
 
-
-
+bool file_is_unicode(fs::path src) {
+    auto handle = ::magic_open(MAGIC_NONE|MAGIC_COMPRESS);
+    ::magic_load(handle, NULL);
+    auto type = ::magic_file(handle, src.c_str());
+    string mimetype(type);
+    string expected ("UTF-8 Unicode text");
+    if (mimetype.compare(expected) == 0) {       
+        return true;
+    } else {
+        return false;
+    }
+}
  
 vector< pair <fs::path,fs::path> > getAllFiles(void) {
 
@@ -485,6 +495,12 @@ int process_raw2dng(fs::path src, fs::path dst) {
         LOGW << "skipping image--json file is empty: " << jsn_img.string();
         return 0;
     }
+
+    if (! file_is_unicode(jsn_img)) {
+        LOGW << "skipping image--json file is not unicode: " << jsn_img.string();
+        return 0;
+    }
+
 
     img.readJson(jsn_img);
 
