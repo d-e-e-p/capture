@@ -68,7 +68,7 @@ class Imagedata{
     string dst;
     char* data = nullptr;
 
-    string header="Tensorfield Ag (c) 2020 😀";
+    string header="Tensorfield Ag (c) 2021 😀";
     string basename;
     string datestamp;
 
@@ -78,6 +78,9 @@ class Imagedata{
     int gain;
     int expo;
     string lens = "unknown";
+    int hfov = 0;
+    int vfov = 0;
+    int wd   = 0;
     int sweep_index = 0;
     int sweep_total = 0;
     float fps;
@@ -383,7 +386,7 @@ class Imagedata{
             string pointsize_east  = " -pointsize " + to_string( (float) 2000 / (float) text_east.length()  - 2 );
             // 728 x 544 -> 768 x 584
             //cmd = "/usr/local/bin/magick  " + src + " -clahe 25x25%+128+2 -quality 100 -gravity Southwest -background black -extent 768x584 -font Inconsolata -pointsize " + pointsize_north + " -fill yellow -gravity North -annotate 0x0+0+15 \"" + text_north + "\" -gravity East -pointsize " + pointsize_east + " -annotate 90x90+20+232 \"" + text_east + "\" -quality 100 " + dst;
-            string extent = " -extent " + to_string(width + 34) + "x" + to_string(height + 62);
+            string extent = " -extent " + to_string(width + 60) + "x" + to_string(height + 62);
             cmd = "/usr/local/bin/magick  " + src + clahe + " -quality 100 -gravity Northwest -background black " + extent + " -font Inconsolata " + pointsize_north + " -fill yellow -gravity South -annotate 0x0+0+15 \"" + text_north + "\" -gravity East " + pointsize_east + " -annotate 90x90+20+400 \"" + text_east + "\" -quality 100 " + dst;
         } else {
             cmd = "magick  " + src + clahe + " -quality 100 " + dst;
@@ -630,27 +633,41 @@ int writeAnnotated(Imagedata image, fs::path dst) {
 	img_L69262_G050E1000/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5361238091616716 1 0.5264241280721809\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.2500806592420843 -0.5338592618004717 -0.1466470277093814 0.09336602040862428 0.8155884855311438 0.09316507336475904 0.17155643564558815 0.03839063611884328 0.8479538818219754\" -ColorMatrix2=\"1.2500806592420843 -0.5338592618004717 -0.1466470277093814 0.09336602040862428 0.8155884855311438 0.09316507336475904 0.17155643564558815 0.03839063611884328 0.8479538818219754\" -IFD0:BlackLevel=3891 -IFD0:WhiteLevel=56926 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3891 -SubIFD:WhiteLevel=56926  -o results/img_L69262_G050E1000/corrected.dng  inputs/images/img_L69262_G050E1000.dng",
 	img_L69262_G075E0500/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5338674100242935 1 0.5266023127910471\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.1329890615738374 -0.4881732658829427 -0.14196922554867467 0.12775718833055238 0.8431271681911314 0.08440771313404193 0.1465669651024354 0.033960732243553705 0.857507580048626\" -ColorMatrix2=\"1.1329890615738374 -0.4881732658829427 -0.14196922554867467 0.12775718833055238 0.8431271681911314 0.08440771313404193 0.1465669651024354 0.033960732243553705 0.857507580048626\" -IFD0:BlackLevel=3908 -IFD0:WhiteLevel=36438 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3908 -SubIFD:WhiteLevel=36438  -o results/img_L69262_G075E0500/corrected.dng  inputs/images/img_L69262_G075E0500.dng",
 	img_L69262_G075E0750/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5444208523700148 1 0.52669439528777\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.1643977886892405 -0.4826074249827946 -0.14283419648934859 0.14663792142752274 0.8702174590603671 0.05608020435417549 0.20091584624504055 0.03643521907080845 0.884627609334895\" -ColorMatrix2=\"1.1643977886892405 -0.4826074249827946 -0.14283419648934859 0.14663792142752274 0.8702174590603671 0.05608020435417549 0.20091584624504055 0.03643521907080845 0.884627609334895\" -IFD0:BlackLevel=3818 -IFD0:WhiteLevel=52617 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3818 -SubIFD:WhiteLevel=52617  -o results/img_L69262_G075E0750/corrected.dng  inputs/images/img_L69262_G075E0750.dng",
-	img_L69262_G100E0500/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5374788680995894 1 0.5297571374157877\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.1760576085015804 -0.4401699570650032 -0.15740251438469904 0.10610808307308084 0.8398551338185003 0.04719755548169963 0.186306874938527 0.18147555453893865 0.8248486750420352\" -ColorMatrix2=\"1.1760576085015804 -0.4401699570650032 -0.15740251438469904 0.10610808307308084 0.8398551338185003 0.04719755548169963 0.186306874938527 0.18147555453893865 0.8248486750420352\" -IFD0:BlackLevel=3846 -IFD0:WhiteLevel=47494 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3846 -SubIFD:WhiteLevel=47494  -o results/img_L69262_G100E0500/corrected.dng  inputs/images/img_L69262_G100E0500.dng",
+	img_L69262_G100E0500/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.8354368288808472 1 0.3334963973838674\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.7958545620910498 -0.7316771500278821 -0.14470306523063842 0.0572263822666258 0.7352202290027773 0.05777825625876722 0.16563999367397092 0.13721666199284607 0.6528471504989322\" -ColorMatrix2=\"1.7958545620910498 -0.7316771500278821 -0.14470306523063842 0.0572263822666258 0.7352202290027773 0.05777825625876722 0.16563999367397092 0.13721666199284607 0.6528471504989322\" -IFD0:BlackLevel=3831 -IFD0:WhiteLevel=42701 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3831 -SubIFD:WhiteLevel=42701  -o results/v2_spence/corrected.dng  inputs/images/v2_spence.dng",
+
 	)STR";
 	    //cout << " res = " << res;
+    
+    /* 
+     * second run v2 (with deltaE=6.2) G100E0500
+	img_L69262_G100E0500/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.8621210511874813 1 0.23644423825584854\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"2.126565094239046 -0.8944845611601386 -0.1762371710449443 0.07846329937865656 0.7815298043904111 0.06866516622115415 0.18472922519090326 0.1551528191573675 0.6771309334630875\" -ColorMatrix2=\"2.126565094239046 -0.8944845611601386 -0.1762371710449443 0.07846329937865656 0.7815298043904111 0.06866516622115415 0.18472922519090326 0.1551528191573675 0.6771309334630875\" -IFD0:BlackLevel=3934 -IFD0:WhiteLevel=65535 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3934 -SubIFD:WhiteLevel=65535  -o results/v2_socal/corrected.dng  inputs/images/v2_socal.dng",
+
+      // first run v2 prefers (with deltaE = 4)
+      //
+	img_L69262_G100E0500/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.7875988496939862 1 0.48537649092002827\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.9503888744463957 -0.56624009463226 -0.23887959291793845 0.04592033002262729 0.8088558520483998 0.06489393608677613 0.1835743150773003 0.11897917572701051 0.7941067055333013\" -ColorMatrix2=\"1.9503888744463957 -0.56624009463226 -0.23887959291793845 0.04592033002262729 0.8088558520483998 0.06489393608677613 0.1835743150773003 0.11897917572701051 0.7941067055333013\" -IFD0:BlackLevel=3790 -IFD0:WhiteLevel=49849 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3790 -SubIFD:WhiteLevel=49849  -o results/v2/corrected.dng  inputs/images/v2.dng",
+   
+      // snappy prefers 
+
+	img_L69262_G100E0500/dng_wb_ccm_bl.json:            "exifcmd": "exiftool -AsShotNeutral=\"0.5374788680995894 1 0.5297571374157877\"   -ForwardMatrix1= -ForwardMatrix2= -ColorMatrix1=\"1.1760576085015804 -0.4401699570650032 -0.15740251438469904 0.10610808307308084 0.8398551338185003 0.04719755548169963 0.186306874938527 0.18147555453893865 0.8248486750420352\" -ColorMatrix2=\"1.1760576085015804 -0.4401699570650032 -0.15740251438469904 0.10610808307308084 0.8398551338185003 0.04719755548169963 0.186306874938527 0.18147555453893865 0.8248486750420352\" -IFD0:BlackLevel=3846 -IFD0:WhiteLevel=47494 -SubIFD:BlackLevelRepeatDim= -SubIFD:BlackLevel=3846 -SubIFD:WhiteLevel=47494  -o results/img_L69262_G100E0500/corrected.dng  inputs/images/img_L69262_G100E0500.dng",
+
+    // seems to be different in v2
+  */ 
 	
 	    auto lines = split_string(res, "\n");
 	    string match_bl;
+	    regex re;
+	    smatch match;
 	    int i = 1;
 	    for (auto itr = lines.begin(); itr != lines.end(); itr++) {
 	        string line = *itr;
-	        LOGV << "line: " << i++ << " - \"" << line << "\"";
-	        regex re;
-	        smatch match;
 	
-	        re = "img_([^/]*)" ; // assume valid lines start with something like img_L69262_G100E0500
-	
+            re = "img_([^/]*)" ; // assume valid lines start with something like img_L69262_G100E0500
 	        regex_search(line, match, re);
 	        if (match.size() == 0) {
-                LOGV << " no match ";
+                LOGV << " NO MATCH: " << "line: " << i++ << " - \"" << line << "\"";
             } else {
                 string key = match.str(1);
-	            LOGV << "key: " << key << " line: " << line;
+                LOGV << " MATCH: key= " << key << " #= " << i++ << " line= \"" << line << "\"";
 
 	            re = "BlackLevel=([0-9]*)";
 	            if (regex_search(line, match, re) && match.size() > 1) {
@@ -1099,6 +1116,15 @@ int writeAnnotated(Imagedata image, fs::path dst) {
            if (jin["camera"].find("lens") != jin["camera"].end()) {
                 lens = jin["camera"]["lens"] ;
            } 
+           if (jin["camera"].find("hfov") != jin["camera"].end()) {
+                hfov = jin["camera"]["hfov"] ;
+           } 
+           if (jin["camera"].find("vfov") != jin["camera"].end()) {
+                vfov = jin["camera"]["vfov"] ;
+           } 
+           if (jin["camera"].find("wd") != jin["camera"].end()) {
+                wd = jin["camera"]["vfov"] ;
+           } 
         }
 
         // return if json doesn't have time key
@@ -1165,6 +1191,9 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         jout["time"]["delta_ms"]=           prd(delta_ms,0);
 
         jout["camera"]["lens"]=             lens;
+        jout["camera"]["hfov"]=             hfov;
+        jout["camera"]["vfov"]=             vfov;
+        jout["camera"]["wd"]=               wd;
         jout["camera"]["gain"]=             gain;
         jout["camera"]["expo"]=             expo;
         jout["camera"]["sweep_index"]=      sweep_index;
@@ -1234,8 +1263,8 @@ int writeAnnotated(Imagedata image, fs::path dst) {
         string result = string(start, end + 1);
 
         // now make sure there are no blank "" -- crashes json
-        regex patt ("\"src\"");
-        result = regex_replace (result,patt,"\"dst\":\"\",\"src\"");
+        //regex patt ("\"src\"");
+        //result = regex_replace (result,patt,"\"dst\":\"\",\"src\"");
 
         return result;
     }
